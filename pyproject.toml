@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentguard"
+name = "agentprdiff"
 version = "0.1.0"
 description = "Guard your LLM agents in CI. Snapshot tests that catch behavioral regressions when models, prompts, or vendors change."
 readme = "README.md"
@@ -48,19 +48,19 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vnageshwaran-de/agentguard"
-Documentation = "https://github.com/vnageshwaran-de/agentguard#readme"
-Issues = "https://github.com/vnageshwaran-de/agentguard/issues"
-Repository = "https://github.com/vnageshwaran-de/agentguard"
+Homepage = "https://github.com/vnageshwaran-de/agentprdiff"
+Documentation = "https://github.com/vnageshwaran-de/agentprdiff#readme"
+Issues = "https://github.com/vnageshwaran-de/agentprdiff/issues"
+Repository = "https://github.com/vnageshwaran-de/agentprdiff"
 
 [project.scripts]
-agentguard = "agentguard.cli:main"
+agentprdiff = "agentprdiff.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentguard"]
+packages = ["src/agentprdiff"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/agentguard", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["src/agentprdiff", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

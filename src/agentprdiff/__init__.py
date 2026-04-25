@@ -1,9 +1,9 @@
-"""agentguard — snapshot testing for LLM agents.
+"""agentprdiff — snapshot testing for LLM agents.
 
 The one-happy-path public API:
 
-    from agentguard import suite, case
-    from agentguard.graders import contains, tool_called, latency_lt_ms, semantic
+    from agentprdiff import suite, case
+    from agentprdiff.graders import contains, tool_called, latency_lt_ms, semantic
 
     def my_agent(query: str) -> str:
         ...
@@ -27,9 +27,9 @@ The one-happy-path public API:
 
 Run from the shell::
 
-    agentguard init
-    agentguard record path/to/my_suite.py     # save baselines
-    agentguard check  path/to/my_suite.py     # diff against baselines; exit 1 on regression
+    agentprdiff init
+    agentprdiff record path/to/my_suite.py     # save baselines
+    agentprdiff check  path/to/my_suite.py     # diff against baselines; exit 1 on regression
 """
 
 from __future__ import annotations

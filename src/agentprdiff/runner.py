@@ -1,4 +1,4 @@
-"""Run a Suite — the heart of agentguard.
+"""Run a Suite — the heart of agentprdiff.
 
 Two modes:
 

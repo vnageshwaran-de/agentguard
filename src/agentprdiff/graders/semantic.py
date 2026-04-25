@@ -8,7 +8,7 @@ judges:
   pipeline without API keys. It passes iff any rubric keyword appears in the
   agent's output.
 * `openai_judge(model=...)` and `anthropic_judge(model=...)` — thin wrappers
-  over the respective SDKs. Imported lazily so agentguard has no required
+  over the respective SDKs. Imported lazily so agentprdiff has no required
   runtime dependency on either SDK.
 
 Custom judges are encouraged. A judge is a callable:
@@ -99,7 +99,7 @@ _JUDGE_PROMPT = (
 def openai_judge(model: str = "gpt-4o-mini", api_key: str | None = None) -> Judge:
     """Return a judge backed by the OpenAI Chat Completions API.
 
-    Requires the `openai` package (install with `pip install agentguard[openai]`).
+    Requires the `openai` package (install with `pip install agentprdiff[openai]`).
     """
 
     def _judge(rubric: str, trace: Trace) -> tuple[bool, str]:
@@ -121,7 +121,7 @@ def openai_judge(model: str = "gpt-4o-mini", api_key: str | None = None) -> Judg
 def anthropic_judge(model: str = "claude-haiku-4-5-20251001", api_key: str | None = None) -> Judge:
     """Return a judge backed by the Anthropic Messages API.
 
-    Requires the `anthropic` package (install with `pip install agentguard[anthropic]`).
+    Requires the `anthropic` package (install with `pip install agentprdiff[anthropic]`).
     """
 
     def _judge(rubric: str, trace: Trace) -> tuple[bool, str]:

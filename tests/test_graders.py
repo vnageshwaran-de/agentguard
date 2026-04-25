@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentguard.graders import (
+from agentprdiff.graders import (
     contains,
     contains_any,
     cost_lt_usd,

@@ -1,11 +1,11 @@
 """Baseline storage.
 
-Baselines live in `.agentguard/baselines/<suite>/<case>.json` relative to the
+Baselines live in `.agentprdiff/baselines/<suite>/<case>.json` relative to the
 project root. They are designed to be checked into git — reviewers should be
 able to see them in pull requests and argue about changes.
 
-Runs (every execution of `agentguard check`) are written under
-`.agentguard/runs/` and are *not* checked in.
+Runs (every execution of `agentprdiff check`) are written under
+`.agentprdiff/runs/` and are *not* checked in.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from .core import Trace
 class BaselineStore:
     """Filesystem-backed store for baseline traces."""
 
-    def __init__(self, root: Path | str = ".agentguard") -> None:
+    def __init__(self, root: Path | str = ".agentprdiff") -> None:
         self.root = Path(root)
 
     # ------------------------------------------------------------------ paths

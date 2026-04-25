@@ -1,4 +1,4 @@
-# agentguard quickstart
+# agentprdiff quickstart
 
 A minimal, runnable example. No API keys required.
 
@@ -7,14 +7,14 @@ A minimal, runnable example. No API keys required.
 pip install -e .
 cd examples/quickstart
 
-agentguard init
-agentguard record suite.py   # records baselines for every case
-agentguard check  suite.py   # re-runs every case, diffs against the baseline
+agentprdiff init
+agentprdiff record suite.py   # records baselines for every case
+agentprdiff check  suite.py   # re-runs every case, diffs against the baseline
 ```
 
 The first `check` after `record` should exit 0 with all cases passing. Now
 edit `agent.py` — change the refund wording or remove the `lookup_order`
-tool call for a particular input — and re-run `agentguard check`. You'll see
+tool call for a particular input — and re-run `agentprdiff check`. You'll see
 the specific grader that now fails, a cost and latency delta, and a unified
 diff of the output.
 

@@ -4,7 +4,7 @@ Every grader returns a `GradeResult`. Deterministic graders (cheap, free,
 no LLM calls) live in `deterministic.py`. The `semantic` grader uses an
 LLM-as-judge backend — it lives in `semantic.py` and is pluggable.
 
-The names exposed from this module form `agentguard`'s public assertion API.
+The names exposed from this module form `agentprdiff`'s public assertion API.
 Keep the surface area small and stable.
 """
 

@@ -1,11 +1,11 @@
-"""Command-line interface for agentguard.
+"""Command-line interface for agentprdiff.
 
 Four subcommands:
 
-* `agentguard init`    — scaffold a .agentguard/ directory
-* `agentguard record`  — record baselines for every suite in a file
-* `agentguard check`   — compare against baselines; exit 1 on regression
-* `agentguard diff`    — show the diff for the most recent run of a case
+* `agentprdiff init`    — scaffold a .agentprdiff/ directory
+* `agentprdiff record`  — record baselines for every suite in a file
+* `agentprdiff check`   — compare against baselines; exit 1 on regression
+* `agentprdiff diff`    — show the diff for the most recent run of a case
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ from .store import BaselineStore
 
 
 @click.group(help="Snapshot testing for LLM agents.")
-@click.version_option(package_name="agentguard", prog_name="agentguard")
+@click.version_option(package_name="agentprdiff", prog_name="agentprdiff")
 @click.option(
     "--root",
-    default=".agentguard",
+    default=".agentprdiff",
     show_default=True,
     help="Directory where baselines and runs are stored.",
 )
@@ -39,7 +39,7 @@ def main(ctx: click.Context, root: str) -> None:
 @main.command("init")
 @click.pass_context
 def cmd_init(ctx: click.Context) -> None:
-    """Create the .agentguard/ directory and a starter .gitignore."""
+    """Create the .agentprdiff/ directory and a starter .gitignore."""
     store: BaselineStore = ctx.obj["store"]
     store.ensure_initialized()
     click.echo(f"initialized {store.root}/")

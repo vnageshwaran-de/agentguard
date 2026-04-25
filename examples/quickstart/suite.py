@@ -1,9 +1,9 @@
-"""Quickstart agentguard suite.
+"""Quickstart agentprdiff suite.
 
 Run with::
 
-    agentguard record examples/quickstart/suite.py
-    agentguard check  examples/quickstart/suite.py
+    agentprdiff record examples/quickstart/suite.py
+    agentprdiff check  examples/quickstart/suite.py
 
 Both commands work with zero API keys — this example uses a mock agent so
 the whole loop is fast and deterministic.
@@ -11,8 +11,8 @@ the whole loop is fast and deterministic.
 
 from __future__ import annotations
 
-from agentguard import case, suite
-from agentguard.graders import (
+from agentprdiff import case, suite
+from agentprdiff.graders import (
     contains,
     cost_lt_usd,
     latency_lt_ms,

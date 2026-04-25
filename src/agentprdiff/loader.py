@@ -25,7 +25,7 @@ def load_suites(path: str | Path) -> list[Suite]:
             f"{p} is a directory; point at a .py file that defines Suites."
         )
 
-    module_name = f"_agentguard_suite_{abs(hash(str(p)))}"
+    module_name = f"_agentprdiff_suite_{abs(hash(str(p)))}"
     spec = importlib.util.spec_from_file_location(module_name, p)
     if spec is None or spec.loader is None:  # pragma: no cover
         raise ImportError(f"could not load suite file: {p}")
@@ -42,6 +42,6 @@ def load_suites(path: str | Path) -> list[Suite]:
     if not suites:
         raise ValueError(
             f"{p} defines no module-level Suite objects. "
-            "Use `from agentguard import suite` and bind the result to a variable."
+            "Use `from agentprdiff import suite` and bind the result to a variable."
         )
     return suites

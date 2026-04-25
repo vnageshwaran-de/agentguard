@@ -35,6 +35,6 @@ jobs:
       - name: quickstart smoke test
         working-directory: examples/quickstart
         run: |
-          agentguard init
-          agentguard record suite.py
-          agentguard check  suite.py
+          agentprdiff init
+          agentprdiff record suite.py
+          agentprdiff check  suite.py

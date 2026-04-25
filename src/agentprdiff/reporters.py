@@ -23,7 +23,7 @@ class TerminalReporter:
 
     def render(self, report: RunReport) -> None:
         header = Text()
-        header.append(f"agentguard {report.mode} ", style="bold cyan")
+        header.append(f"agentprdiff {report.mode} ", style="bold cyan")
         header.append("— suite ", style="dim")
         header.append(f"{report.suite_name}", style="bold")
         header.append(

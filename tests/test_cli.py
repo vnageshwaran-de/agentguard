@@ -1,6 +1,6 @@
 """CLI smoke tests via click's CliRunner.
 
-We invoke `agentguard record` and `agentguard check` against the bundled
+We invoke `agentprdiff record` and `agentprdiff check` against the bundled
 quickstart suite to make sure the wiring is correct end-to-end.
 """
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from agentguard.cli import main
+from agentprdiff.cli import main
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "quickstart"
 
@@ -19,10 +19,10 @@ EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "quickstart"
 def test_init_creates_directories(tmp_path):
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path):
-        result = runner.invoke(main, ["--root", ".agentguard", "init"])
+        result = runner.invoke(main, ["--root", ".agentprdiff", "init"])
         assert result.exit_code == 0, result.output
-        assert Path(".agentguard/baselines").exists()
-        assert Path(".agentguard/runs").exists()
+        assert Path(".agentprdiff/baselines").exists()
+        assert Path(".agentprdiff/runs").exists()
 
 
 def test_record_then_check_on_quickstart(tmp_path):
@@ -34,17 +34,17 @@ def test_record_then_check_on_quickstart(tmp_path):
     runner = CliRunner()
 
     result = runner.invoke(
-        main, ["--root", str(work / ".agentguard"), "record", str(work / "suite.py")]
+        main, ["--root", str(work / ".agentprdiff"), "record", str(work / "suite.py")]
     )
     assert result.exit_code == 0, result.output
 
     # Record must have created baselines.
-    baselines = list((work / ".agentguard" / "baselines").rglob("*.json"))
+    baselines = list((work / ".agentprdiff" / "baselines").rglob("*.json"))
     assert len(baselines) >= 4
 
     # Second run should be clean.
     result = runner.invoke(
-        main, ["--root", str(work / ".agentguard"), "check", str(work / "suite.py")]
+        main, ["--root", str(work / ".agentprdiff"), "check", str(work / "suite.py")]
     )
     assert result.exit_code == 0, result.output
     assert "no regressions" in result.output.lower()
@@ -56,13 +56,13 @@ def test_diff_command_prints_baseline_json(tmp_path):
 
     runner = CliRunner()
     runner.invoke(
-        main, ["--root", str(work / ".agentguard"), "record", str(work / "suite.py")]
+        main, ["--root", str(work / ".agentprdiff"), "record", str(work / "suite.py")]
     )
     result = runner.invoke(
         main,
         [
             "--root",
-            str(work / ".agentguard"),
+            str(work / ".agentprdiff"),
             "diff",
             "customer_support",
             "refund_happy_path",

@@ -1,4 +1,4 @@
-"""Core data model for agentguard.
+"""Core data model for agentprdiff.
 
 A `Suite` is a list of `Case`s. Each case, when run, produces a `Trace`. A
 `Grader` is a callable `(Trace) -> GradeResult` that asserts something about

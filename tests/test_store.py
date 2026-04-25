@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from agentguard import Trace
-from agentguard.store import BaselineStore
+from agentprdiff import Trace
+from agentprdiff.store import BaselineStore
 
 
 def test_save_and_load_baseline(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     store.ensure_initialized()
     t = Trace(suite_name="s", case_name="c", input="hi", output="hello")
     path = store.save_baseline(t)
@@ -20,13 +20,13 @@ def test_save_and_load_baseline(tmp_path):
 
 
 def test_load_missing_returns_none(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     store.ensure_initialized()
     assert store.load_baseline("none", "none") is None
 
 
 def test_names_with_unsafe_chars(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     store.ensure_initialized()
     t = Trace(suite_name="weird/name", case_name="case with spaces", input="x")
     path = store.save_baseline(t)
@@ -39,7 +39,7 @@ def test_names_with_unsafe_chars(tmp_path):
 
 
 def test_ensure_initialized_writes_gitignore(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     store.ensure_initialized()
-    gi = (tmp_path / ".agentguard" / ".gitignore").read_text()
+    gi = (tmp_path / ".agentprdiff" / ".gitignore").read_text()
     assert "runs/" in gi

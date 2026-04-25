@@ -1,6 +1,6 @@
 """A tiny mock agent used by the quickstart.
 
-The real `agentguard` workflow is:
+The real `agentprdiff` workflow is:
 
 1. Your agent does its thing (calling OpenAI / Anthropic / whatever).
 2. You instrument it: record `LLMCall` and `ToolCall` objects onto a `Trace`.
@@ -11,7 +11,7 @@ We mock out steps 1–3 so the quickstart runs in CI with no API keys.
 
 from __future__ import annotations
 
-from agentguard import LLMCall, ToolCall, Trace
+from agentprdiff import LLMCall, ToolCall, Trace
 
 
 ORDERS: dict[str, dict] = {

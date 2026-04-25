@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentguard import LLMCall, ToolCall, Trace
+from agentprdiff import LLMCall, ToolCall, Trace
 
 
 @pytest.fixture

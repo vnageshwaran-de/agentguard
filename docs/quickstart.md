@@ -1,18 +1,18 @@
 # Quickstart
 
 ```bash
-pip install agentguard
+pip install agentprdiff
 ```
 
 ## 1. Wrap your agent
 
 Your agent can be any callable that takes an input and returns an output.
-If you want `agentguard` to assert on tool calls, cost, or latency, return
+If you want `agentprdiff` to assert on tool calls, cost, or latency, return
 a `(output, Trace)` tuple and record `LLMCall` / `ToolCall` objects on the
 `Trace` as your agent runs.
 
 ```python
-from agentguard import Trace, LLMCall, ToolCall
+from agentprdiff import Trace, LLMCall, ToolCall
 
 def my_agent(query: str) -> tuple[str, Trace]:
     trace = Trace(suite_name="", case_name="", input=query)
@@ -38,8 +38,8 @@ def my_agent(query: str) -> tuple[str, Trace]:
 
 ```python
 # suite.py
-from agentguard import case, suite
-from agentguard.graders import contains, tool_called, latency_lt_ms, semantic
+from agentprdiff import case, suite
+from agentprdiff.graders import contains, tool_called, latency_lt_ms, semantic
 
 from my_agent import my_agent
 
@@ -64,16 +64,16 @@ billing = suite(
 ## 3. Record baselines
 
 ```
-$ agentguard init
-$ agentguard record suite.py
+$ agentprdiff init
+$ agentprdiff record suite.py
 ```
 
-Commit `.agentguard/baselines/` to your repo.
+Commit `.agentprdiff/baselines/` to your repo.
 
 ## 4. Check in CI
 
 ```
-$ agentguard check suite.py
+$ agentprdiff check suite.py
 ```
 
 Exit 0 when everything passes. Exit 1 on regression.
@@ -84,6 +84,6 @@ When a PR genuinely improves agent behavior, re-record and commit the new
 baseline so reviewers can see the before/after:
 
 ```
-$ agentguard record suite.py
-$ git diff .agentguard/baselines/
+$ agentprdiff record suite.py
+$ git diff .agentprdiff/baselines/
 ```

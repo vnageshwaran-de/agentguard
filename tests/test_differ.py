@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from agentguard import LLMCall, ToolCall, Trace
-from agentguard.differ import diff_traces
-from agentguard.graders import contains
+from agentprdiff import LLMCall, ToolCall, Trace
+from agentprdiff.differ import diff_traces
+from agentprdiff.graders import contains
 
 
 def _trace(output: str, tools: list[str] | None = None, cost: float = 0.0, latency: float = 0.0) -> Trace:

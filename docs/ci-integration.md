@@ -1,6 +1,6 @@
 # CI integration
 
-`agentguard check` returns exit code `0` when all cases pass and no case
+`agentprdiff check` returns exit code `0` when all cases pass and no case
 regressed against the baseline, and exit code `1` otherwise. That is the
 whole integration story — drop it into any CI.
 
@@ -17,7 +17,7 @@ on:
     branches: [main]
 
 jobs:
-  agentguard:
+  agentprdiff:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,11 +29,11 @@ jobs:
         env:
           # Only set if you use the semantic grader with a real judge.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: agentguard check suites/*.py --json-out artifacts/agentguard.json
+        run: agentprdiff check suites/*.py --json-out artifacts/agentprdiff.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: agentguard-report
+          name: agentprdiff-report
           path: artifacts/
 ```
 
@@ -44,14 +44,14 @@ which matches keywords and is good enough for rough smoke-testing.
 ## GitLab CI
 
 ```yaml
-agentguard:
+agentprdiff:
   image: python:3.11
   script:
     - pip install -e ".[dev]"
-    - agentguard check suites/*.py --json-out agentguard.json
+    - agentprdiff check suites/*.py --json-out agentprdiff.json
   artifacts:
     when: always
-    paths: [agentguard.json]
+    paths: [agentprdiff.json]
 ```
 
 ## CircleCI
@@ -59,41 +59,41 @@ agentguard:
 ```yaml
 version: 2.1
 jobs:
-  agentguard:
+  agentprdiff:
     docker: [{ image: cimg/python:3.11 }]
     steps:
       - checkout
       - run: pip install -e ".[dev]"
-      - run: agentguard check suites/*.py --json-out /tmp/agentguard.json
-      - store_artifacts: { path: /tmp/agentguard.json }
+      - run: agentprdiff check suites/*.py --json-out /tmp/agentprdiff.json
+      - store_artifacts: { path: /tmp/agentprdiff.json }
 ```
 
 ## Buildkite
 
 ```yaml
 steps:
-  - label: ":robot: agentguard"
+  - label: ":robot: agentprdiff"
     command: |
       pip install -e ".[dev]"
-      agentguard check suites/*.py --json-out agentguard.json
-    artifact_paths: ["agentguard.json"]
+      agentprdiff check suites/*.py --json-out agentprdiff.json
+    artifact_paths: ["agentprdiff.json"]
 ```
 
 ## Reviewing a regression in a pull request
 
-1. `agentguard check` prints the failing cases and a unified diff of the
+1. `agentprdiff check` prints the failing cases and a unified diff of the
    agent output for each regression, directly in the CI log.
 2. The JSON artifact (`--json-out`) contains the full structured delta —
    every grader's pass/fail state, cost delta, latency delta, tool-call
    sequence change. Point your dashboarding at it if you care.
 3. If the regression is **intentional**, the PR author runs
-   `agentguard record suites/*.py` locally and commits the updated
-   `.agentguard/baselines/` diff. Reviewers see the new baseline in the
+   `agentprdiff record suites/*.py` locally and commits the updated
+   `.agentprdiff/baselines/` diff. Reviewers see the new baseline in the
    same PR — a first-class audit trail of "how the agent changed".
 
 ## Scheduled runs
 
-`agentguard check` is idempotent and cheap when you use deterministic
+`agentprdiff check` is idempotent and cheap when you use deterministic
 graders, so it's reasonable to run it on a cron for drift detection
 even when code hasn't changed — upstream models themselves can drift.
 

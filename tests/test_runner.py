@@ -2,15 +2,15 @@
 
 These exercise the full record → check workflow with a small in-process
 agent. They are the most important tests in the suite: if these pass,
-agentguard's core loop works.
+agentprdiff's core loop works.
 """
 
 from __future__ import annotations
 
-from agentguard import LLMCall, ToolCall, Trace, case, suite
-from agentguard.graders import contains, cost_lt_usd, no_tool_called, tool_called
-from agentguard.runner import Runner
-from agentguard.store import BaselineStore
+from agentprdiff import LLMCall, ToolCall, Trace, case, suite
+from agentprdiff.graders import contains, cost_lt_usd, no_tool_called, tool_called
+from agentprdiff.runner import Runner
+from agentprdiff.store import BaselineStore
 
 
 def toy_agent(query: str) -> tuple[str, Trace]:
@@ -43,7 +43,7 @@ def _build_suite():
 
 
 def test_record_then_check_is_green(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     runner = Runner(store)
 
     s = _build_suite()
@@ -59,7 +59,7 @@ def test_record_then_check_is_green(tmp_path):
 
 
 def test_check_detects_regression_when_agent_behavior_changes(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     runner = Runner(store)
 
     s = _build_suite()
@@ -81,7 +81,7 @@ def test_check_detects_regression_when_agent_behavior_changes(tmp_path):
 
 
 def test_first_run_with_failing_assertion_counts_as_regression(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     runner = Runner(store)
     s = suite(
         name="toy",
@@ -94,7 +94,7 @@ def test_first_run_with_failing_assertion_counts_as_regression(tmp_path):
 
 
 def test_agent_exception_is_captured(tmp_path):
-    store = BaselineStore(root=tmp_path / ".agentguard")
+    store = BaselineStore(root=tmp_path / ".agentprdiff")
     runner = Runner(store)
 
     def raising_agent(q):
