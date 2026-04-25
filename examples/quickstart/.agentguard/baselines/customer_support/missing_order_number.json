@@ -1,0 +1,51 @@
+{
+  "case_name": "missing_order_number",
+  "suite_name": "customer_support",
+  "input": "Something is wrong with my order",
+  "output": "Happy to help \u2014 could you share your order number?",
+  "llm_calls": [
+    {
+      "provider": "mock",
+      "model": "mock-sonnet-1",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "Something is wrong with my order"
+        }
+      ],
+      "output_text": "I need to look up the order first.",
+      "tool_calls": [],
+      "prompt_tokens": 18,
+      "completion_tokens": 12,
+      "cost_usd": 0.0002,
+      "latency_ms": 180.0,
+      "timestamp": ""
+    },
+    {
+      "provider": "mock",
+      "model": "mock-sonnet-1",
+      "input_messages": [
+        {
+          "role": "user",
+          "content": "Something is wrong with my order"
+        }
+      ],
+      "output_text": "Happy to help \u2014 could you share your order number?",
+      "tool_calls": [],
+      "prompt_tokens": 60,
+      "completion_tokens": 10,
+      "cost_usd": 0.0008,
+      "latency_ms": 420.0,
+      "timestamp": ""
+    }
+  ],
+  "tool_calls": [],
+  "total_cost_usd": 0.001,
+  "total_latency_ms": 600.0,
+  "total_prompt_tokens": 78,
+  "total_completion_tokens": 22,
+  "error": null,
+  "metadata": {},
+  "run_id": "2f5c89f3843b",
+  "created_at": "2026-04-25T15:58:09+00:00"
+}

@@ -1,0 +1,163 @@
+# agentguard
+
+**Guard your LLM agents in CI.** Snapshot tests that catch behavioral regressions when models, prompts, or vendors change.
+
+> You upgraded Claude. You tweaked a system prompt. You swapped `gpt-4o` for `gpt-4o-mini` in the cheap path. Which of your agent's behaviors just changed? `agentguard` tells you — before the PR merges.
+
+```bash
+pip install agentguard
+```
+
+[![CI](https://github.com/vnageshwaran-de/agentguard/actions/workflows/ci.yml/badge.svg)](https://github.com/vnageshwaran-de/agentguard/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/agentguard.svg)](https://pypi.org/project/agentguard/)
+[![Python](https://img.shields.io/pypi/pyversions/agentguard.svg)](https://pypi.org/project/agentguard/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+
+## Why
+
+Unit tests assume determinism. Agents aren't deterministic, but they do have *behaviors you rely on* — a specific tool gets called, a refund amount is quoted, a latency budget is respected, a safety guardrail fires. When a model or prompt changes, those behaviors drift. Today most teams find out in production.
+
+`agentguard` turns those behaviors into versioned, diffable baselines you check into git, and a CI command that fails the build when they regress.
+
+It is **not** a framework. Your agent stays exactly the way it is. `agentguard` records what it did, lets you assert what should be true about what it did, and compares runs across time.
+
+## 10-line hello world
+
+```python
+# suite.py
+from agentguard import case, suite
+from agentguard.graders import contains, tool_called, latency_lt_ms, semantic
+from my_agent import run  # your agent — unchanged
+
+support = suite(
+    name="customer_support",
+    agent=run,
+    cases=[
+        case(
+            name="refund_happy_path",
+            input="I want a refund for order #1234",
+            expect=[
+                contains("refund"),
+                tool_called("lookup_order"),
+                semantic("agent acknowledges the refund and explains the timeline"),
+                latency_lt_ms(10_000),
+            ],
+        ),
+    ],
+)
+```
+
+```bash
+agentguard init
+agentguard record suite.py     # save this run as the baseline
+agentguard check  suite.py     # in CI: diff vs baseline, exit 1 on regression
+```
+
+That's the whole product. Four CLI commands. One Python file. Zero framework lock-in.
+
+## What's in the box
+
+- **Case + Suite model** — tiny, opinionated, no magic.
+- **10 batteries-included graders** — `contains`, `contains_any`, `regex_match`, `tool_called`, `tool_sequence`, `no_tool_called`, `output_length_lt`, `latency_lt_ms`, `cost_lt_usd`, `semantic` (LLM-as-judge with pluggable backend).
+- **Baseline store** — JSON files under `.agentguard/baselines/`, meant to be **committed**. Reviewers see trace changes in pull requests.
+- **Diff engine** — per-case `TraceDelta` with assertion pass/fail changes, cost delta, latency delta, tool-sequence changes, and a unified output diff.
+- **CI-ready CLI** — exit 1 on regression, `--json-out` for artifact archiving, Rich-formatted terminal output.
+- **Zero SDK lock-in** — works with OpenAI, Anthropic, Gemini, Bedrock, LangChain, LangGraph, LlamaIndex, Vercel AI SDK, custom wrappers — if you can wrap your agent in a function, `agentguard` can test it.
+
+## How it compares
+
+| | Unit tests | LLM-as-judge eval | `agentguard` |
+|---|---|---|---|
+| Deterministic pass/fail | yes | no | **yes** (when assertions are deterministic) |
+| Catches behavioral drift | no | yes | **yes** |
+| Runs in CI on every PR | yes | too expensive | **yes** |
+| Human-readable diff of what changed | n/a | rare | **yes** |
+| Works without API keys | yes | no | **yes** (deterministic graders + fake judge) |
+
+The value is in the combination: deterministic assertions for the 80% of behaviors you can encode as rules ("this tool was called", "this word appeared", "cost stayed under $0.02"), plus a semantic grader for the 20% that need a judge — with a fake-judge fallback so your CI stays green and free when API keys aren't available.
+
+## The workflow
+
+1. Write a `Suite` alongside your agent code.
+2. Run `agentguard record` once on a known-good version. Commit the resulting `.agentguard/baselines/` directory.
+3. In CI, on every PR, run `agentguard check`. If any assertion regresses, or cost/latency budgets are breached, the job fails.
+4. When behavior intentionally changes, the PR author re-runs `agentguard record`, commits the new baseline, and explains the change in the PR description. Reviewers see the before/after in the diff.
+
+This is the same loop as Jest snapshot tests or VCR cassettes — applied to LLM agents.
+
+## Instrumenting your agent
+
+`agentguard` doesn't monkey-patch anything. Your agent returns `(output, Trace)`:
+
+```python
+from agentguard import Trace, LLMCall, ToolCall
+
+def my_agent(query: str) -> tuple[str, Trace]:
+    trace = Trace(suite_name="", case_name="", input=query)
+
+    # ... call your model, record what happened ...
+    trace.record_llm_call(LLMCall(
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        prompt_tokens=120, completion_tokens=80,
+        cost_usd=0.0012, latency_ms=340,
+    ))
+
+    # ... call a tool, record what happened ...
+    trace.record_tool_call(ToolCall(name="lookup_order", arguments={"id": "1234"}))
+
+    return final_output, trace
+```
+
+Agents that return just an output still work — `agentguard` wraps them and captures wall-clock latency. You can backfill richer instrumentation incrementally, assertion by assertion.
+
+## CI integration
+
+```yaml
+# .github/workflows/agents.yml
+name: agent-regression
+on: [pull_request]
+jobs:
+  agentguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e ".[dev]"
+      - run: agentguard check suites/*.py --json-out artifacts/agentguard.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: agentguard, path: artifacts/ }
+```
+
+See [`docs/ci-integration.md`](./docs/ci-integration.md) for GitLab, CircleCI, and Buildkite.
+
+## Quickstart
+
+A runnable end-to-end demo, no API keys needed:
+
+```bash
+git clone https://github.com/vnageshwaran-de/agentguard
+cd agentguard
+pip install -e ".[dev]"
+
+cd examples/quickstart
+agentguard init
+agentguard record suite.py
+agentguard check  suite.py   # exit 0
+
+# now break the agent and watch agentguard catch it
+sed -i "s/refund/noundr/g" agent.py
+agentguard check suite.py    # exit 1; see the diff
+```
+
+## Status
+
+`agentguard` is **alpha** (0.1.0). The core model and CLI are stable; provider-specific SDK wrappers and a LangChain/LangGraph integration are on the 0.2 roadmap. See [`CHANGELOG.md`](./CHANGELOG.md).
+
+Feedback, bug reports, and PRs extremely welcome. Open an issue or @ me.
+
+## License
+
+MIT. See [`LICENSE`](./LICENSE).
