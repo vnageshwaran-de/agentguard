@@ -13,7 +13,7 @@ pip install agentprdiff
 [![Python](https://img.shields.io/pypi/pyversions/agentprdiff.svg)](https://pypi.org/project/agentprdiff/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
-> **Adopting with an AI coding agent?** Point Claude Code, Cursor, Aider, or any agentic IDE at [`AGENTS.md`](./AGENTS.md). It's a step-by-step adoption playbook designed to be consumed by an AI agent that's been asked *"add agentprdiff to this repo"* — including codebase discovery, contract identification, wrap-the-agent recipes, stub patterns, common pitfalls, and a validation checklist.
+> **Adopting with an AI coding agent?** Point Claude Code, Cursor, Aider, or any agentic IDE at [`AGENTS.md`](./AGENTS.md) — a step-by-step adoption playbook the agent reads directly. Humans driving the adoption: see [`docs/ai-driven-adoption.md`](./docs/ai-driven-adoption.md) for copy-paste prompt templates and a sample session transcript.
 
 ## Why
 
