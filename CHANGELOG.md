@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   custom), stub patterns, suite scaffolding, baseline recording, CI
   wiring, common pitfalls, and a validation checklist. Optimized for
   AI-agent-driven adoption with copy-paste templates.
+- `docs/ai-driven-adoption.md` — human-facing companion to AGENTS.md.
+  Three prompt templates (minimum viable / recommended / contract-driven)
+  for adopters using Claude Code / Cursor / Aider, plus a sample
+  first-session transcript and tips for working with the AI agent
+  through the adoption flow.
 
 ### Changed
 
