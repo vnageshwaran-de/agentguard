@@ -378,6 +378,36 @@ locally (rather than the keyword-matching fake fallback), also set
 [AGENTS.md → API keys](https://github.com/vnageshwaran-de/agentprdiff/blob/main/AGENTS.md#api-keys--what-to-set-where-and-how-to-ask-the-user-about-them)
 for the full picture, including CI secret setup.
 
+## Semantic Judge Keys
+
+`semantic(...)` graders need an LLM judge to render verdicts. Without
+one, agentprdiff silently falls back to `fake_judge` (keyword matching) —
+the suite reports PASS even when no LLM ever ran. Make the judge mode
+explicit so the absence-or-presence of LLM scoring is never ambiguous in
+CI logs.
+
+**This suite's mode:** TODO — fill in one of:
+
+- `fake_judge` — free, keyword matching only. Acceptable when the rubric
+  reduces cleanly to keywords; brittle otherwise. Set
+  `AGENTGUARD_JUDGE=fake`.
+- Real Anthropic judge — recommended for cost.
+  `AGENTGUARD_JUDGE=anthropic` plus `ANTHROPIC_API_KEY=...`.
+- Real OpenAI judge — `AGENTGUARD_JUDGE=openai` plus `OPENAI_API_KEY=...`.
+- `Not applicable` — this suite has no `semantic(...)` graders. Verify with
+  `grep -n "semantic(" suites/{name}.py`. State this explicitly anyway so
+  the next reviewer knows the absence of judge config is deliberate.
+
+**Reproduce CI's mode locally:** export the same env vars CI sets and run:
+
+```bash
+agentprdiff check suites/{name}.py --case <a_case_with_semantic>
+```
+
+Confirm the trace shows non-zero `cost_usd` on the judge call (real
+judges) or a flat zero (fake_judge). A real-judge config that traces zero
+cost means the silent fallback bit you — re-check the env vars.
+
 ## Run locally
 
 ```bash
@@ -614,10 +644,19 @@ jobs:
           # or a project-specific name. Add the secret in:
           # Settings -> Secrets and variables -> Actions -> New repository secret.
           OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
-          # Optional: real semantic judge in CI. Without this, semantic()
-          # graders fall back to fake_judge (keyword matching) — see
-          # AGENTS.md "API keys" section. Omit this line entirely to use
-          # fake_judge and keep CI free.
+          # Semantic-judge mode (see AGENTS.md "Step 5b — decide and document
+          # the semantic-judge mode"). Pick one and uncomment; do NOT rely on
+          # the implicit selection order — it makes "which provider did I
+          # get?" ambiguous in CI logs. If your suite has no semantic()
+          # graders, leave all three commented and CI runs free.
+          #
+          #   AGENTGUARD_JUDGE: fake          # keyword matching, free
+          #   AGENTGUARD_JUDGE: anthropic     # real judge, cheaper; pair with ANTHROPIC_API_KEY below
+          #   AGENTGUARD_JUDGE: openai        # real judge; pair with OPENAI_API_KEY above
+          #
+          # Pair the chosen judge with its key. Without a key, semantic()
+          # falls back to fake_judge silently and you'll see PASS without
+          # the LLM judge ever running.
           ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
         run: |
           if [ -z "${{OPENAI_API_KEY}}" ]; then
