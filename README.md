@@ -88,6 +88,41 @@ The value is in the combination: deterministic assertions for the 80% of behavio
 
 This is the same loop as Jest snapshot tests or VCR cassettes — applied to LLM agents.
 
+### API keys
+
+`agentprdiff` doesn't read your agent's API key — your agent does, through whatever env var it already uses. Set that locally (in `.env`, your shell, direnv, whatever) and as a GitHub Actions secret in CI. The scaffold's workflow YAML has the right shape; you fill in the env var name to match your agent.
+
+The `semantic()` grader is the one piece of agentprdiff that can use an API key directly — for the LLM judge. Without one, it silently falls back to keyword matching. Set `ANTHROPIC_API_KEY` (cheaper) or `OPENAI_API_KEY` if you want a real judge in CI; leave both unset to keep CI free with fake_judge.
+
+See [AGENTS.md → API keys](https://github.com/vnageshwaran-de/agentprdiff/blob/main/AGENTS.md#api-keys--what-to-set-where-and-how-to-ask-the-user-about-them) for the full setup (local options, CI secrets, what never to do).
+
+### What each command does on rerun
+
+A common first-day question. Short version:
+
+- `record` — overwrites baselines in place. Re-recording an intentional change shows up as a regular git diff in your PR; that's the review surface.
+- `check` — creates a new timestamped directory under `.agentprdiff/runs/` on every invocation. It's gitignored by default, so it never reaches CI; clean local history any time with `rm -rf .agentprdiff/runs/`. `--json-out PATH` overwrites a single file at PATH.
+- `scaffold` — never overwrites. Skips files that already exist (`[skip]`) and writes the rest.
+- `init` — idempotent; running it twice does nothing the second time.
+
+See [AGENTS.md → Rerun semantics](https://github.com/vnageshwaran-de/agentprdiff/blob/main/AGENTS.md#rerun-semantics--what-each-command-does-on-the-second-run) for examples.
+
+### Scaffolding a new suite
+
+Skip the copy-paste from [AGENTS.md](https://github.com/vnageshwaran-de/agentprdiff/blob/main/AGENTS.md):
+
+```bash
+agentprdiff scaffold ai_content_summary --recipe sync-openai
+```
+
+Writes the canonical layout (`suites/__init__.py`, `_eval_agent.py`, `_stubs.py`, `<name>.py`, `<name>_cases.md`, `suites/README.md`, and `.github/workflows/agentprdiff.yml`) with TODO markers where you wire in your agent. The `<name>_cases.md` file is a *case dossier* — reviewer-facing prose with one block per case (what it tests, input, assertions in plain English, file:line references to production code, and the application impact if the case regresses). Three recipes:
+
+- `sync-openai` (default): uses `instrument_client` from the OpenAI adapter.
+- `async-openai`: manual asyncio wrapper. Use until the async adapter ships in 0.3.
+- `stubbed`: substitutes a single LLM helper instead of the SDK client. Best for summarization / classification / embedding-prep agents — see [`docs/adapters.md`](https://github.com/vnageshwaran-de/agentprdiff/blob/main/docs/adapters.md#stubbed-llm-boundary-pattern).
+
+The generated workflow includes `permissions: contents: read` so GHAS doesn't flag it. Pre-existing files are never overwritten.
+
 ## Instrumenting your agent
 
 You have two paths. Most agents need the first.
@@ -147,6 +182,8 @@ Agents that return just an output still work — `agentprdiff` wraps them and ca
 # .github/workflows/agents.yml
 name: agent-regression
 on: [pull_request]
+permissions:
+  contents: read   # least-privilege; GHAS flags workflows without this.
 jobs:
   agentprdiff:
     runs-on: ubuntu-latest
@@ -160,6 +197,8 @@ jobs:
         if: always()
         with: { name: agentprdiff, path: artifacts/ }
 ```
+
+If you use `--json-out artifacts/...`, add `artifacts/agentprdiff*.json` (or the broader `artifacts/`) to your project's `.gitignore` — the CI artifact upload doesn't prevent a contributor from accidentally `git add`ing it locally.
 
 See [`docs/ci-integration.md`](https://github.com/vnageshwaran-de/agentprdiff/blob/main/docs/ci-integration.md) for GitLab, CircleCI, and Buildkite.
 
@@ -181,6 +220,34 @@ agentprdiff check  suite.py   # exit 0
 sed -i "s/refund/noundr/g" agent.py
 agentprdiff check suite.py    # exit 1; see the diff
 ```
+
+### Running a subset of cases
+
+Iterating on a single failing case shouldn't require commenting out the rest. `record` and `check` both accept `--case` and `--skip` for narrowing a run:
+
+```bash
+# Discover what's available.
+agentprdiff check suite.py --list
+
+# Single case (case-insensitive substring).
+agentprdiff check suite.py --case refund_happy_path
+
+# Glob across cases.
+agentprdiff check suite.py --case "*order*"
+
+# Multiple patterns (repeated flag or comma-separated).
+agentprdiff check suite.py --case refund --case policy
+agentprdiff check suite.py --case refund,policy
+
+# Everything except slow cases.
+agentprdiff check suite.py --skip slow
+agentprdiff check suite.py --case ~slow         # equivalent
+
+# Qualify by suite when names collide across suites.
+agentprdiff check suite.py --case "billing:refund*"
+```
+
+A filter that matches zero cases exits 2 and prints the available case names — `--list` is the discoverable counterpart. The selection summary (`running 2 of 4 cases in <suite>: ...`) is printed before each suite runs so a partial match is never silent.
 
 ## Status
 

@@ -16,6 +16,12 @@ on:
   push:
     branches: [main]
 
+# Default to read-only. This workflow only checks out code and uploads
+# artifacts; GitHub Advanced Security flags workflows without an explicit
+# permissions block.
+permissions:
+  contents: read
+
 jobs:
   agentprdiff:
     runs-on: ubuntu-latest
@@ -40,6 +46,22 @@ jobs:
 If you don't want to spend money on a real semantic judge in every PR,
 leave the key unset — the semantic grader will fall back to `fake_judge`,
 which matches keywords and is good enough for rough smoke-testing.
+
+**Add the JSON report path to `.gitignore`.** `--json-out artifacts/...`
+uploads cleanly as a CI build artifact, but the same path is written on every
+local run. Without an ignore entry it gets `git add .`-ed by accident:
+
+```gitignore
+artifacts/agentprdiff*.json
+```
+
+**On rerun:** `--json-out PATH` overwrites the file at PATH each invocation
+— CI sees only the latest report, no accumulation. Locally, every
+`agentprdiff check` also writes a full per-case trace under
+`.agentprdiff/runs/<timestamp>/`; that directory accumulates and is
+gitignored. Wipe it with `rm -rf .agentprdiff/runs/` whenever you want.
+See [AGENTS.md → Rerun semantics](../AGENTS.md#rerun-semantics--what-each-command-does-on-the-second-run)
+for the full picture.
 
 ## GitLab CI
 

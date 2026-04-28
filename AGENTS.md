@@ -40,6 +40,7 @@ Memorize this tree. Every adoption produces exactly this shape; deviating from i
 │   ├── _eval_agent.py              ← MANDATORY (Step 3 produces this)
 │   ├── _stubs.py                   ← MANDATORY iff side-effecting tools (Step 4)
 │   ├── <project>.py                ← MANDATORY (Step 5 produces this)
+│   ├── <project>_cases.md          ← MANDATORY (Step 5 produces this — case dossier)
 │   └── README.md                   ← recommended
 │
 ├── .agentprdiff/
@@ -54,6 +55,7 @@ Memorize this tree. Every adoption produces exactly this shape; deviating from i
 | File | Status | Created by |
 |---|---|---|
 | `suites/<project>.py` | MANDATORY | you |
+| `suites/<project>_cases.md` | MANDATORY (the case dossier — see Step 5) | you |
 | `suites/_eval_agent.py` | MANDATORY | you |
 | `suites/_stubs.py` | MANDATORY iff side-effecting tools exist | you |
 | `suites/__init__.py` | optional | you |
@@ -64,6 +66,8 @@ Memorize this tree. Every adoption produces exactly this shape; deviating from i
 | `.github/workflows/agentprdiff.yml` | strongly recommended | you |
 
 The Steps below produce these files in order. When you finish, your final `git status` should show *only* these paths added — no production-code modifications.
+
+> **Shortcut: scaffold first, fill in TODOs.** Run `agentprdiff scaffold <project_name> --recipe <recipe>` to lay down the whole canonical layout in one shot, then edit the generated files. Recipes: `sync-openai` (default; `instrument_client`), `async-openai` (manual asyncio wrapper, until the async adapter ships in 0.3), `stubbed` (substitutes a single LLM helper — see [`docs/adapters.md`](./docs/adapters.md#stubbed-llm-boundary-pattern)). The scaffold also writes `suites/<project_name>_cases.md` — the case dossier (per-case "what it tests / input / assertions / code impacted / application impact"). Existing files are never overwritten, so this is safe to run on a partially-built suite.
 
 ---
 
@@ -367,6 +371,45 @@ Rules:
 - Always include `latency_lt_ms` and `cost_lt_usd` on every case. Set generous initial budgets (3× observed median); tighten later.
 - For `semantic(...)` graders, write the rubric as a *behavioral* statement: "agent acknowledges the refund and explains the timeline" — not "agent says the word refund."
 
+### Also write the case dossier — `suites/<project>_cases.md`
+
+This is MANDATORY. The suite file is data that machines read; the dossier is prose that humans read. PR reviewers, on-call engineers, and the future maintainer all use it to map a case name back to *what it pins and why it matters*. `agentprdiff scaffold` lays down a template — fill in one block per case in the suite, using exactly this structure (do not invent new section names; reviewers learn this shape once across projects):
+
+```markdown
+### `<case_name>`
+
+**What it tests.** One paragraph in plain English. A non-author should be able to read it in ten seconds and know what's protected.
+
+**Input.** The exact input passed to the agent and *why this input was chosen* — which contract row from Step 2 does it exercise?
+
+**Assertions.**
+
+- Each grader translated to plain English ("output contains the order number", "the `lookup_order` tool was called exactly once").
+- Always state the budget line ("latency under 5s, cost under $0.01") so the reviewer doesn't have to read the suite to find it.
+
+**Code impacted.** File paths and approximate line numbers in production code that this case exercises. This is the line a reviewer follows back to context when CI fails.
+
+- `path/to/agent.py:NN` — what's tested at this line (prompt assembly, tool routing, post-processing, etc.).
+
+**Application impact.** One concrete sentence about what breaks for end users if this regresses. "Refunds silently fail" — not "the agent misbehaves."
+```
+
+Worked example (from a real adoption — embedding pipeline):
+
+> ### `article_summary_preserves_acquisition_entities`
+>
+> **What it tests.** An article summary must keep important entities and facts before that summary is fed into the embedding step.
+>
+> **Input.** An article about Acme Robotics acquiring Beta Analytics for $2 billion.
+>
+> **Assertions.** Output contains "Acme Robotics", "Beta Analytics", and "$2 billion"; stays concise; no unexpected tool calls; latency under 5s; cost under $0.01.
+>
+> **Code impacted.** `common/ai_content_summary.py:23` (prompt quality), `common/ai_content_summary.py:30` (returned summary content), `content-embeds-v2/app/functions/embedding.py:28` (where `ai_content_summary(...)` feeds the embedding input).
+>
+> **Application impact.** If this breaks, embeddings lose key article details. Search and recommendations end up embedding "a company acquired another company" instead of the actual entities and deal value — measurable degradation in retrieval relevance.
+
+Update the dossier whenever you add, remove, or meaningfully change a case. CI doesn't enforce sync (the dossier is reviewer documentation, not test infrastructure), so this discipline is on you.
+
 ---
 
 ## Step 6 — record baselines
@@ -380,6 +423,7 @@ agentprdiff record suites/<project_name>.py
 Inspect the table the recorder prints:
 
 - If a case is marked `REGRESSION` in record mode, the assertions failed on first run. **This is a real finding.** Either the agent has a bug, or the case is over-asserted, or a stub returned unexpected data. Investigate before proceeding.
+- While debugging a single failing case, narrow the loop with `--case`: `agentprdiff record suites/<project_name>.py --case <case_name>` re-records just that one case (substring or glob; case-insensitive). Use `--list` to see what's available, and `--skip <pat>` (or `--case ~<pat>`) to drop noisy cases. A filter that matches nothing exits 2 — no silent zero-runs.
 - If everything passes, commit:
 
 ```bash
@@ -387,7 +431,7 @@ git add .agentprdiff/.gitignore .agentprdiff/baselines/
 git commit -m "Add agentprdiff baselines for <project_name>"
 ```
 
-The `runs/` directory under `.agentprdiff/` is git-ignored automatically. Only `baselines/` should be committed.
+The `runs/` directory under `.agentprdiff/` is git-ignored automatically. Only `baselines/` should be committed. See [Rerun semantics](#rerun-semantics--what-each-command-does-on-the-second-run) for what `record` does on subsequent invocations (it overwrites baselines in place — that's how intentional behavior changes flow into PRs as a normal git diff).
 
 ---
 
@@ -407,6 +451,12 @@ on:
       - "requirements.txt"
       - ".github/workflows/agentprdiff.yml"
   workflow_dispatch: {}
+
+# Default to read-only — this workflow only checks out code and uploads
+# artifacts. GitHub Advanced Security flags workflows without an explicit
+# permissions block, and least-privilege is the right default anyway.
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -434,6 +484,183 @@ jobs:
 ```
 
 Tell the user to add the API-key secret in GitHub Settings → Secrets and variables → Actions.
+
+**Also add `artifacts/` to the project root `.gitignore`** if you wired the workflow with `--json-out artifacts/...`. CI uploads that path as a build artifact, but the JSON file lands in the contributor's working tree on every local run; without an ignore line a developer eventually `git add .`s it by accident. The minimal entry is:
+
+```gitignore
+# agentprdiff JSON reports written by --json-out (CI artifacts; not source).
+artifacts/agentprdiff*.json
+```
+
+Use the broader `artifacts/` line if the directory is exclusively for CI uploads.
+
+---
+
+## API keys — what to set, where, and how to ask the user about them
+
+This is the single most common source of "I followed the steps and it doesn't work" reports. There are two distinct sets of keys at play, and conflating them confuses adopters.
+
+### The two key surfaces
+
+**1. Your production agent's keys.** Whatever `OpenAI(...)`, `Anthropic(...)`, `genai.Client(...)`, or your custom client factory reads. agentprdiff doesn't read these — it imports your eval wrapper, which imports your production agent, which reads them itself. If the production code reads `OPENAI_API_KEY`, that's what you set. If it reads a custom name (`COMPANY_OPENAI_KEY`, `LLM_API_KEY`), that's what you set.
+
+**2. agentprdiff's semantic-judge keys.** The `semantic(...)` grader uses a real LLM as judge. Selection order (see `src/agentprdiff/graders/semantic.py:164`):
+
+| Env var | Effect |
+|---|---|
+| `AGENTGUARD_JUDGE=fake` | Force fake_judge (keyword matching). |
+| `AGENTGUARD_JUDGE=openai` or `OPENAI_API_KEY` set | OpenAI as judge. |
+| `AGENTGUARD_JUDGE=anthropic` or `ANTHROPIC_API_KEY` set | Anthropic as judge. |
+| Nothing set | **Silent fallback to fake_judge.** |
+
+The silent fallback is the trap. Without a key, `semantic()` graders run keyword-matching and you'll see PASS without knowing the LLM judge never ran. Make this loud for adopters: if they're using `semantic()` graders and want a real judge, the key has to be set in *both* local dev and CI.
+
+If your production agent and the semantic judge happen to share a provider (both OpenAI), one key covers both.
+
+### Where to put the key
+
+**Locally — never commit it.** Three reasonable patterns:
+
+```bash
+# 1. .env file (most common). Make sure it's gitignored first.
+echo ".env" >> .gitignore
+echo "OPENAI_API_KEY=sk-..." > .env
+# Load it with `set -a; source .env; set +a` or use python-dotenv / direnv.
+
+# 2. Shell export (for one-off runs).
+export OPENAI_API_KEY=sk-...
+agentprdiff record suites/<project>.py
+
+# 3. direnv (per-directory). Add to .envrc:
+export OPENAI_API_KEY=sk-...
+# Then `direnv allow` once.
+```
+
+**In CI — GitHub Actions secrets.**
+
+1. Repo → Settings → Secrets and variables → Actions → New repository secret. Name: `OPENAI_API_KEY` (or whichever your agent reads). Value: the key.
+2. The workflow YAML reads it from `secrets.*` and exposes it as an env var:
+
+```yaml
+env:
+  # Match the env var your production agent reads.
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  # Optional: real semantic judge in CI. Omit to use fake_judge.
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+The scaffolded workflow already has the right shape; you fill in the env var name to match the production agent.
+
+### What never to do
+
+- **Never commit a key.** Even in a private repo. Once it's in git history, rotate the key — you can't `git rm` it cleanly.
+- **Never embed a key in a baseline.** Spot-check at least one `.agentprdiff/baselines/<suite>/<case>.json` before committing the baselines. If `LLMCall.input_messages` or any field captured a header / config object that includes the key, fix the production code to not pass headers through and re-record.
+- **Never check in `.env`.** Verify with `git check-ignore .env` — it should print `.env` (meaning ignored). If it prints nothing, your `.gitignore` is missing the line.
+
+### Prompt the user about keys — explicitly
+
+Before declaring the adoption done, ask the user (one message, three questions):
+
+1. **"Which env var does your production agent read for its API key?"** Common answers: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, or a project-specific name. Update the workflow YAML's `env:` block to match. If they don't know, point at the production client construction site — it's usually obvious (`OpenAI(api_key=os.environ["..."])` or just `OpenAI()`).
+
+2. **"Do you want the semantic grader to use a real LLM judge in CI, or is fake_judge fine?"** Real judge costs money on every PR (one Claude/GPT call per `semantic()` assertion per case). Fake judge is free but only does keyword matching. If they choose real, ask whether to set `ANTHROPIC_API_KEY` (cheaper, recommended) or `OPENAI_API_KEY`. Add the secret to the workflow YAML.
+
+3. **"Confirm `.env` is gitignored and no committed file contains a key."** Run `git check-ignore .env` and `git grep -E 'sk-[a-zA-Z0-9_-]{20,}'` to verify. Mention rotation if they find anything.
+
+If they skip the semantic-judge question or answer ambiguously, default to fake_judge — it keeps CI free and green, and they can switch later by adding the secret. Tell them this so they're not surprised by silent fake_judge later.
+
+---
+
+## Rerun semantics — what each command does on the second run
+
+Adopters and AI coding agents both ask this within their first hour: *what happens if I run agentprdiff twice?* The answer is different for each subcommand. Surface this to the user when you hand off — `check`'s `runs/` accumulation is the only behavior that creates new files on every invocation, and it's a footgun if you don't know about it.
+
+### `agentprdiff record` — overwrites in place
+
+Each baseline has a deterministic path: `.agentprdiff/baselines/<suite>/<case>.json`. A second `record` rewrites the same files with the new trace. No new files, no accumulation. That is the design — `record` *is* the "save the new baseline" operation.
+
+```bash
+agentprdiff record suites/<project>.py
+ls .agentprdiff/baselines/<project>/
+#  case_a.json  case_b.json  case_c.json
+
+# Change the agent. Re-record.
+agentprdiff record suites/<project>.py
+ls .agentprdiff/baselines/<project>/
+#  case_a.json  case_b.json  case_c.json    ← same paths, new contents
+
+# To see what changed across re-records, diff the working tree against HEAD:
+git diff .agentprdiff/baselines/
+```
+
+When the user re-records intentionally, the new baseline JSON shows up as a normal git diff in their PR. That's the review surface — no extra tooling needed.
+
+### `agentprdiff check` — accumulates a timestamped directory per run
+
+Every `check` writes to `.agentprdiff/runs/<YYYYMMDDTHHMMSSZ>/<suite>/<case>.json`. Run check 50 times locally and you have 50 directories. This is intentional — each run's full trace stays available so you can inspect a specific historical run if needed. There is **no automatic cleanup** in 0.2.
+
+```bash
+agentprdiff check suites/<project>.py
+agentprdiff check suites/<project>.py
+ls .agentprdiff/runs/
+#  20260427T101503Z  20260427T101547Z
+
+# Wipe local run history any time:
+rm -rf .agentprdiff/runs/
+```
+
+The good news: `agentprdiff init` writes `.agentprdiff/.gitignore` with `runs/` excluded, so this clutter never reaches git — it just lives in the developer's local working tree. Verify the gitignore line exists if `git status` ever shows `.agentprdiff/runs/` as untracked.
+
+If `--json-out` is passed, the JSON report file is **overwritten** on every run — same path each time, not accumulated. CI artifact uploads see only the latest:
+
+```bash
+agentprdiff check suites/<project>.py --json-out artifacts/agentprdiff.json
+agentprdiff check suites/<project>.py --json-out artifacts/agentprdiff.json
+ls artifacts/
+#  agentprdiff.json     ← single file, overwritten on each run
+```
+
+### `agentprdiff scaffold <name>` — refuses to overwrite
+
+Second run skips every file that already exists and prints `[skip]` for each. Safe to rerun on a partially-built project (e.g., to copy in a missing template file after deleting one).
+
+```bash
+agentprdiff scaffold ai_content_summary
+#  [new]  suites/__init__.py
+#  [new]  suites/_eval_agent.py
+#  [new]  suites/ai_content_summary.py
+#  [new]  suites/ai_content_summary_cases.md
+#  ... (7 files written)
+
+agentprdiff scaffold ai_content_summary
+#  [skip] suites/__init__.py (already exists)
+#  [skip] suites/_eval_agent.py (already exists)
+#  ... (every file skipped)
+#  Nothing scaffolded — every target file already exists.
+```
+
+To intentionally regenerate a single template file: delete it first, then rerun `scaffold` — only that one file will be written.
+
+### `agentprdiff init` — idempotent
+
+Directories use `mkdir(exist_ok=True)`; the `.gitignore` is only written if missing. Running it twice does nothing the second time.
+
+```bash
+agentprdiff init
+#  initialized .agentprdiff/
+agentprdiff init
+#  initialized .agentprdiff/    ← same output, no-op underneath
+```
+
+### Quick reference
+
+| Command | On second run | Creates new files? | Safe to rerun? |
+|---|---|---|---|
+| `record` | overwrites baselines in place | no | yes (intentional re-record) |
+| `check` | new timestamped dir under `runs/` | yes (gitignored) | yes; cleanup with `rm -rf .agentprdiff/runs/` |
+| `check --json-out PATH` | overwrites PATH | no (the JSON itself) | yes |
+| `scaffold` | skips existing files | no | yes (use to top up missing templates) |
+| `init` | no-op | no | yes |
 
 ---
 
@@ -487,12 +714,14 @@ Before declaring the work done, verify all of these. The checklist mirrors the c
 - [ ] `suites/_eval_agent.py` exists and uses `instrument_client` (or, for Recipe C, manual `Trace.record_*` calls).
 - [ ] `suites/_stubs.py` exists if the agent has side-effecting tools, with one stub per such tool. Stubs return shape-compatible dicts.
 - [ ] `suites/<project_name>.py` exists. Every case has at least one positive behavior assertion, at least one negative assertion (`no_tool_called` or similar), and a budget grader.
+- [ ] `suites/<project_name>_cases.md` exists. Every case in the suite has a corresponding `### \`<case_name>\`` section with all five fields filled in: *What it tests*, *Input*, *Assertions*, *Code impacted* (with file:line references to production code), *Application impact*. No TODO markers remain.
 - [ ] No case has more than one `semantic(...)` grader.
 - [ ] `agentprdiff init` was run; `.agentprdiff/.gitignore` exists.
 - [ ] `agentprdiff record suites/<project_name>.py` ran and produced one JSON file per case under `.agentprdiff/baselines/<project_name>/`.
 - [ ] `agentprdiff check suites/<project_name>.py` exits 0 immediately after `record`. (If it doesn't, either the suite is non-deterministic — broaden graders — or the agent has a real regression — flag it to the user.)
 - [ ] `.github/workflows/agentprdiff.yml` exists, references the API-key secret, and has a fallback that skips cleanly when the secret is absent.
-- [ ] You have NOT committed any baseline trace that records a real API key, customer data, or PII. Inspect at least one baseline JSON manually before committing.
+- [ ] **You asked the user about API keys** (see [API keys](#api-keys--what-to-set-where-and-how-to-ask-the-user-about-them)): which env var the production agent reads, whether to use a real semantic judge in CI, and whether `.env` is gitignored. Update the workflow YAML's `env:` block to match.
+- [ ] You have NOT committed any baseline trace that records a real API key, customer data, or PII. Inspect at least one baseline JSON manually before committing. Run `git grep -E 'sk-[a-zA-Z0-9_-]{20,}'` over the staged baselines as a quick scan.
 - [ ] The diff matches the shape described in `docs/suite-layout.md` — five hand-written files, no production-code changes.
 - [ ] You wrote a PR description that lists each case and what it pins. (The author of the project will eventually maintain this; making the rationale explicit helps them.)
 
@@ -544,11 +773,24 @@ Read the actual files at `examples/coursenotes-ai/` (or the upstream repo at git
 
 Tell the user:
 
-1. Files added (paths only).
-2. Cases written (just the names — they should already know the rationale from Step 2).
+1. Files added (paths only). Call out `suites/<project_name>_cases.md` explicitly — it's the dossier they (and reviewers) will use to understand each case at a glance.
+2. Cases written (just the names — they should already know the rationale from Step 2). Point them at the dossier for details rather than re-explaining each case in chat.
 3. Whether `agentprdiff check` passed against the freshly-recorded baselines.
 4. Any regression `record` itself surfaced (these are real findings; flag them prominently).
-5. The exact command they should run in CI: `agentprdiff check suites/<project_name>.py`.
+5. The exact commands they should know:
+   - CI: `agentprdiff check suites/<project_name>.py`
+   - Iterate on one case: `agentprdiff check suites/<project_name>.py --case <case_name>`
+   - Discover case names: `agentprdiff check suites/<project_name>.py --list`
+6. **API keys — ask explicitly, do not assume.** This is the single most common adoption-failure cause. Ask them:
+   - "Which env var does your production agent read?" Update the workflow YAML to match.
+   - "Real semantic judge in CI, or fake_judge?" If real, add the appropriate secret (`ANTHROPIC_API_KEY` is cheaper). Warn them that without a key, `semantic()` graders silently fall back to keyword matching — they'll see PASS without the LLM judge running.
+   - "Is `.env` in `.gitignore`?" Verify with `git check-ignore .env`.
+   - Point them at the [API keys](#api-keys--what-to-set-where-and-how-to-ask-the-user-about-them) section for the full picture.
+7. **Rerun behavior** (one sentence each — the user will hit these within a day):
+   - `record` rewrites the baseline files in place. Re-recording an intentional change shows up as a normal git diff in their PR.
+   - `check` adds a new timestamped directory under `.agentprdiff/runs/` on every invocation. It's git-ignored so it never reaches CI, but they can wipe local history any time with `rm -rf .agentprdiff/runs/`.
+   - `scaffold` and `init` are safe to rerun — they refuse to overwrite existing files and skip cleanly.
+   - See [Rerun semantics](#rerun-semantics--what-each-command-does-on-the-second-run) for the full rules.
 
 If `record` surfaced a regression, do not assume it's a bug in the suite. Describe what you saw to the user and ask whether to (a) accept the current behavior as the baseline, (b) treat it as a real bug they want to fix, or (c) loosen the assertion.
 

@@ -6,6 +6,9 @@ Four subcommands:
 * `agentprdiff record`  — record baselines for every suite in a file
 * `agentprdiff check`   — compare against baselines; exit 1 on regression
 * `agentprdiff diff`    — show the diff for the most recent run of a case
+
+`record` and `check` accept ``--case`` / ``--skip`` filters and a ``--list``
+flag for case discovery; see :mod:`agentprdiff.filtering` for pattern syntax.
 """
 
 from __future__ import annotations
@@ -16,10 +19,41 @@ from pathlib import Path
 
 import click
 
+from .core import Suite
+from .filtering import apply_filter, parse_patterns
 from .loader import load_suites
 from .reporters import JsonReporter, TerminalReporter
 from .runner import Runner
+from .scaffold import VALID_RECIPES, scaffold
 from .store import BaselineStore
+
+# Click options shared by `record` and `check`. Defined once so the help text
+# stays in sync between the two commands.
+_CASE_OPTION = click.option(
+    "--case",
+    "case_patterns",
+    multiple=True,
+    metavar="PATTERN",
+    help=(
+        "Only run cases whose name matches PATTERN. Repeatable; "
+        "comma-separated values are also split (`--case a,b`). "
+        "Globs (`*`, `?`) and substrings both work; prefix `~` to negate "
+        "(`--case ~slow`). Use `suite:case` to qualify by suite."
+    ),
+)
+_SKIP_OPTION = click.option(
+    "--skip",
+    "skip_patterns",
+    multiple=True,
+    metavar="PATTERN",
+    help="Skip cases matching PATTERN. Same syntax as --case; repeatable.",
+)
+_LIST_OPTION = click.option(
+    "--list",
+    "list_only",
+    is_flag=True,
+    help="Print suite/case names without running anything, then exit.",
+)
 
 
 @click.group(help="Snapshot testing for LLM agents.")
@@ -50,22 +84,38 @@ def cmd_init(ctx: click.Context) -> None:
 @main.command("record")
 @click.argument("suite_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--json-out", type=click.Path(path_type=Path), help="Write JSON report to this path.")
+@_CASE_OPTION
+@_SKIP_OPTION
+@_LIST_OPTION
 @click.pass_context
-def cmd_record(ctx: click.Context, suite_file: Path, json_out: Path | None) -> None:
+def cmd_record(
+    ctx: click.Context,
+    suite_file: Path,
+    json_out: Path | None,
+    case_patterns: tuple[str, ...],
+    skip_patterns: tuple[str, ...],
+    list_only: bool,
+) -> None:
     """Run every suite in SUITE_FILE and save each trace as the baseline."""
     store: BaselineStore = ctx.obj["store"]
     runner = Runner(store)
     terminal = TerminalReporter()
 
-    suites = load_suites(suite_file)
+    suites_all = load_suites(suite_file)
+    if list_only:
+        _print_listing(suites_all)
+        return
+
+    suites = _select_or_exit(suites_all, case_patterns, skip_patterns)
+
     any_error = False
     for s in suites:
         report = runner.record(s)
         terminal.render(report)
         if json_out:
             JsonReporter().render(report, json_out)
-        # record mode doesn't fail on failures, but a literal exception during
-        # execution still warrants a nonzero exit.
+        # record mode doesn't fail on grader failures, but a literal exception
+        # during execution still warrants a nonzero exit.
         if any(cr.trace.error for cr in report.case_reports):
             any_error = True
 
@@ -75,6 +125,9 @@ def cmd_record(ctx: click.Context, suite_file: Path, json_out: Path | None) -> N
 @main.command("check")
 @click.argument("suite_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--json-out", type=click.Path(path_type=Path), help="Write JSON report to this path.")
+@_CASE_OPTION
+@_SKIP_OPTION
+@_LIST_OPTION
 @click.option(
     "--fail-on/--no-fail-on",
     "fail_on_regression",
@@ -87,6 +140,9 @@ def cmd_check(
     ctx: click.Context,
     suite_file: Path,
     json_out: Path | None,
+    case_patterns: tuple[str, ...],
+    skip_patterns: tuple[str, ...],
+    list_only: bool,
     fail_on_regression: bool,
 ) -> None:
     """Run every suite in SUITE_FILE and diff against saved baselines."""
@@ -94,8 +150,14 @@ def cmd_check(
     runner = Runner(store)
     terminal = TerminalReporter()
 
+    suites_all = load_suites(suite_file)
+    if list_only:
+        _print_listing(suites_all)
+        return
+
+    suites = _select_or_exit(suites_all, case_patterns, skip_patterns)
+
     any_regression = False
-    suites = load_suites(suite_file)
     for s in suites:
         report = runner.check(s)
         terminal.render(report)
@@ -104,6 +166,66 @@ def cmd_check(
         any_regression = any_regression or report.has_regression
 
     sys.exit(1 if (any_regression and fail_on_regression) else 0)
+
+
+@main.command("scaffold")
+@click.argument("name")
+@click.option(
+    "--recipe",
+    type=click.Choice(VALID_RECIPES, case_sensitive=False),
+    default="sync-openai",
+    show_default=True,
+    help=(
+        "Eval-wrapper template to generate. "
+        "`sync-openai` uses instrument_client; `async-openai` writes a "
+        "manual asyncio wrapper; `stubbed` substitutes a single LLM helper "
+        "(see docs/adapters.md)."
+    ),
+)
+@click.option(
+    "--dir",
+    "root_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("."),
+    show_default=True,
+    help="Project root to scaffold into. Defaults to the current directory.",
+)
+def cmd_scaffold(name: str, recipe: str, root_dir: Path) -> None:
+    """Stamp out the canonical suite layout for NAME.
+
+    Produces ``suites/__init__.py``, ``_eval_agent.py``, ``_stubs.py``,
+    ``<NAME>.py``, ``suites/README.md``, and ``.github/workflows/agentprdiff.yml``.
+    Existing files are never overwritten — they are reported as `[skip]`.
+    """
+    try:
+        result = scaffold(name, recipe=recipe, root=root_dir)
+    except ValueError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(2)
+
+    for p in result.written:
+        click.echo(f"  [new]  {p.relative_to(root_dir) if p.is_relative_to(root_dir) else p}")
+    for p in result.skipped:
+        click.echo(
+            f"  [skip] {p.relative_to(root_dir) if p.is_relative_to(root_dir) else p} "
+            "(already exists)"
+        )
+
+    if not result.written:
+        click.echo("\nNothing scaffolded — every target file already exists.")
+        return
+
+    click.echo(
+        f"\nScaffolded {len(result.written)} file(s) for '{name}' "
+        f"using recipe '{recipe}'."
+    )
+    click.echo("\nNext steps:")
+    click.echo("  1. Edit suites/_eval_agent.py — replace the TODOs with imports")
+    click.echo("     and call sites for your production agent.")
+    click.echo("  2. Edit suites/_stubs.py — one stub per side-effecting tool.")
+    click.echo(f"  3. Edit suites/{name}.py — flesh out the case list.")
+    click.echo("  4. Run: agentprdiff init")
+    click.echo(f"  5. Run: agentprdiff record suites/{name}.py")
 
 
 @main.command("diff")
@@ -118,6 +240,75 @@ def cmd_diff(ctx: click.Context, suite_name: str, case_name: str) -> None:
         click.echo(f"no baseline found for {suite_name}/{case_name}", err=True)
         sys.exit(2)
     click.echo(json.dumps(trace.model_dump(mode="json"), indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared between `record` and `check`.
+# ---------------------------------------------------------------------------
+
+
+def _print_listing(suites: list[Suite]) -> None:
+    """Print suite/case names as a flat tree.
+
+    Output is intentionally plain (no rich styling) so it pipes cleanly into
+    grep / fzf when users want to discover what to filter on.
+    """
+    for s in suites:
+        n = len(s.cases)
+        click.echo(f"{s.name}  ({n} case{'s' if n != 1 else ''})")
+        for c in s.cases:
+            click.echo(f"  {c.name}")
+
+
+def _select_or_exit(
+    suites_all: list[Suite],
+    case_patterns: tuple[str, ...],
+    skip_patterns: tuple[str, ...],
+) -> list[Suite]:
+    """Apply ``--case`` / ``--skip`` filters and announce the selection.
+
+    Returns the filtered suite list, or exits with code 2 if filters were
+    provided but matched zero cases — an exit-0 silent zero-match is a worse
+    failure mode than a noisy error.
+    """
+    include = parse_patterns(list(case_patterns))
+    exclude = parse_patterns(list(skip_patterns))
+    if not include and not exclude:
+        return suites_all
+
+    selected = apply_filter(suites_all, include=include, exclude=exclude)
+
+    if not selected:
+        click.echo("error: no cases matched --case/--skip filters.", err=True)
+        all_names = [f"{s.name}/{c.name}" for s in suites_all for c in s.cases]
+        if all_names:
+            click.echo("available cases:", err=True)
+            for name in all_names:
+                click.echo(f"  {name}", err=True)
+            click.echo(
+                "(tip: run with --list to see suite/case names; patterns are "
+                "case-insensitive substrings or globs.)",
+                err=True,
+            )
+        sys.exit(2)
+
+    # Announce per-suite selection so a partial match doesn't silently look
+    # like the suite shrank.
+    selected_by_name = {s.name: s for s in selected}
+    for s_orig in suites_all:
+        s_new = selected_by_name.get(s_orig.name)
+        if s_new is None:
+            click.echo(
+                f"skipping suite {s_orig.name} (0 of {len(s_orig.cases)} cases match)"
+            )
+            continue
+        kept_names = ", ".join(c.name for c in s_new.cases)
+        click.echo(
+            f"running {len(s_new.cases)} of {len(s_orig.cases)} cases in "
+            f"{s_orig.name}: {kept_names}"
+        )
+
+    return selected
 
 
 if __name__ == "__main__":  # pragma: no cover

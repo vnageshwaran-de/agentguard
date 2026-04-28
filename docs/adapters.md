@@ -145,6 +145,90 @@ For `AsyncOpenAI` / `AsyncAnthropic`, use the same adapter; the patch wraps the 
 
 > Note: 0.2 supports the synchronous client API. Async support is on the 0.3 roadmap. If your agent is async, manual instrumentation is the safe path until then.
 
+### Stubbed LLM-boundary pattern
+
+Use this when the production code wraps a single LLM call in a helper (`summarize(text)`, `classify(query)`, `extract_entities(doc)`) and the agent is *that helper plus surrounding deterministic logic* — chunking, dedup, entity merging, embedding prep, output formatting. Most summarization, classification, and retrieval pipelines look like this.
+
+The cleaner test boundary is the helper, not the SDK client. Substitute the helper with a deterministic stub and exercise the orchestration around it. Three reasons this is better than `instrument_client` for this shape of code:
+
+1. The interesting logic is what the agent does *with* the LLM output, not the LLM call itself. Stubbing the boundary lets you assert on that without paying for a real call or maintaining brittle SDK-shape fixtures.
+2. Async vs sync, OpenAI vs Anthropic vs whatever — the stub doesn't care. It returns a string. This is the only path that's clean today if your client is `AsyncOpenAI` (until the async adapter lands in 0.3).
+3. You can vary the LLM output deliberately to test downstream behavior: "given this exact summary, does the entity extractor produce the right list?" — useful for the post-processing edge cases.
+
+The trade-off is real: **this recipe does not test the prompt itself.** It tests everything except the prompt. Pair it with a small live-API suite (`--case prompt_*`) that runs only on prompt changes if you also need prompt-quality regression coverage.
+
+#### Wiring it
+
+Production code:
+
+```python
+# agent/summarize.py
+async def summarize_article(article: str) -> str:
+    """Single LLM call, single string out. Stubbable boundary."""
+    client = AsyncOpenAI()
+    resp = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "system", "content": SUMMARY_PROMPT},
+                  {"role": "user", "content": article}],
+    )
+    return resp.choices[0].message.content
+
+async def run(article: str) -> dict:
+    """The agent: helper + deterministic post-processing."""
+    summary = await summarize_article(article)
+    entities = extract_entities(summary)        # deterministic
+    return {"summary": summary, "entities": dedupe(entities)}
+```
+
+The eval-side wrapper substitutes `summarize_article` with a deterministic stub and (optionally) builds a `Trace` around the call so cost/latency graders still have something to grade:
+
+```python
+# suites/_eval_agent.py
+import asyncio
+from agentprdiff import Trace, LLMCall
+from agent import summarize as agent_mod
+
+# One canned summary per case input shape. Branch on a substring of the
+# input, not on identity — keep stubs dumb.
+def fake_summarize(article: str) -> str:
+    if "acquired" in article.lower():
+        return "Acme acquired Widget Co for $42M, expanding its hardware line."
+    return "Generic summary text."
+
+async def _eval_agent_async(article: str):
+    trace = Trace(suite_name="", case_name="", input=article)
+
+    # Swap the helper out for the test.
+    original = agent_mod.summarize_article
+    async def wrapped(text: str) -> str:
+        out = fake_summarize(text)
+        # Record what the helper "did" so cost_lt_usd / latency_lt_ms graders
+        # still get values to evaluate. Numbers should be plausible, not real.
+        trace.record_llm_call(LLMCall(
+            provider="stub", model="stub-summarize-v1",
+            input_messages=[{"role": "user", "content": text[:200]}],
+            output_text=out,
+            prompt_tokens=len(text) // 4, completion_tokens=len(out) // 4,
+            cost_usd=0.0001, latency_ms=120.0,
+        ))
+        return out
+    agent_mod.summarize_article = wrapped
+    try:
+        result = await agent_mod.run(article)
+    finally:
+        agent_mod.summarize_article = original
+
+    return result, trace
+
+def eval_agent(article: str):
+    """Sync entry point — agentprdiff calls this."""
+    return asyncio.run(_eval_agent_async(article))
+```
+
+The suite uses `eval_agent` as if it were the production agent. Cases assert on the final `result` (entities, dedup, formatting) and on the trace's recorded LLM call (cost ceiling, latency ceiling). The prompt itself is unverified — that's the deliberate trade.
+
+If you don't care about cost/latency graders for this suite, drop the `record_llm_call` and the `Trace` becomes a passthrough — even simpler.
+
 ### Cost-budgeted CI
 
 Combine the adapter's automatic cost recording with the `cost_lt_usd` grader to make CI fail when an agent gets meaningfully more expensive:

@@ -15,6 +15,7 @@ If you're an AI coding agent following [`AGENTS.md`](../AGENTS.md), use this as 
 │   ├── _eval_agent.py              ← MANDATORY
 │   ├── _stubs.py                   ← MANDATORY iff any tool has side effects
 │   ├── <project>.py                ← MANDATORY (the suite definition)
+│   ├── <project>_cases.md          ← MANDATORY (the case dossier)
 │   └── README.md                   ← recommended
 │
 ├── .agentprdiff/
@@ -28,7 +29,7 @@ If you're an AI coding agent following [`AGENTS.md`](../AGENTS.md), use this as 
     └── agentprdiff.yml             ← strongly recommended; not strictly required
 ```
 
-Five mandatory artifacts, two recommended, one optional. Everything else lives elsewhere — your existing production code, tests, requirements file, CI scripts.
+Six mandatory artifacts, two recommended, one optional. Everything else lives elsewhere — your existing production code, tests, requirements file, CI scripts.
 
 ---
 
@@ -52,6 +53,21 @@ This is the suite definition. The single file `agentprdiff record` and `agentprd
 - Calls to your production agent — that's what the suite *runs*, not what the file contains.
 
 **Naming convention:** the filename can be whatever you want; `<project>.py` is recommended for the obvious mapping. The `name=` field on the `Suite` becomes the directory name under `.agentprdiff/baselines/`, so pick a slug that's stable and project-identifying.
+
+### `suites/<project>_cases.md` — **MANDATORY**
+
+The case dossier — reviewer-facing documentation that maps each `case.name` to plain English. The suite file is data that machines read; this file is prose that humans read at PR review and during incident triage. `agentprdiff scaffold` writes a template; you fill it in.
+
+**Must contain** one block per case in `<project>.py`, using exactly these section names so the shape is consistent across projects:
+
+- `### \`<case_name>\`` — heading matches `case.name`.
+- `**What it tests.**` — one paragraph in plain English.
+- `**Input.**` — the exact input plus *why* it was chosen (which contract row).
+- `**Assertions.**` — each grader translated to plain English, including the budget line.
+- `**Code impacted.**` — file paths and line numbers in production code that this case exercises (e.g. `agent/summarize.py:23`).
+- `**Application impact.**` — one concrete sentence about what breaks for end users on regression.
+
+**Must not contain** TODO markers from the scaffold template by the time the PR is opened. CI does not enforce sync between this file and the suite — drift is on you.
 
 ### `suites/_eval_agent.py` — **MANDATORY**
 

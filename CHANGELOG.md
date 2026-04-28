@@ -6,6 +6,86 @@ prototyped under the name `tracediff`; renamed before first public release.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`agentprdiff scaffold <name>`** — new subcommand that stamps out the
+  canonical adoption layout (`suites/__init__.py`, `_eval_agent.py`,
+  `_stubs.py`, `<name>.py`, `<name>_cases.md`, `suites/README.md`, and
+  `.github/workflows/agentprdiff.yml`). Three recipes via `--recipe`:
+  `sync-openai` (default; uses `instrument_client`), `async-openai` (manual
+  asyncio wrapper, until the async adapter ships in 0.3), and `stubbed`
+  (substitutes a single LLM helper — see the new "stubbed LLM-boundary
+  pattern" recipe in `docs/adapters.md`). The generated workflow includes
+  `permissions: contents: read` so GitHub Advanced Security stops flagging
+  it. Pre-existing files are never overwritten — they're reported as
+  `[skip]` and the rest are still written.
+- **Case dossier** (`suites/<name>_cases.md`) — new mandatory artifact
+  produced by `scaffold` and documented in AGENTS.md and
+  `docs/suite-layout.md`. Reviewer-facing markdown with one block per case
+  using a fixed five-field structure: *What it tests*, *Input*,
+  *Assertions* (plain English), *Code impacted* (file:line references back
+  to production code), and *Application impact* (one concrete sentence
+  about what breaks for end users on regression). Closes the gap between
+  case names that look meaningful in CI output ("article_summary_preserves_acquisition_entities")
+  and reviewers who need to know what each case actually pins.
+- New "stubbed LLM-boundary pattern" recipe in `docs/adapters.md` for
+  agents whose LLM call is wrapped in a single helper (summarization,
+  classification, embedding-prep). Stubbing the helper is cleaner than
+  stubbing the SDK client and works equally well for sync and async clients.
+- `agentprdiff record` and `agentprdiff check` now accept `--case PATTERN` and
+  `--skip PATTERN` for narrowing a run to a subset of cases. Patterns are
+  case-insensitive substrings by default and use `fnmatch` semantics when they
+  contain `*`, `?`, or `[`. Both flags are repeatable, accept comma-separated
+  lists (`--case refund,policy`), and support qualifier syntax
+  (`--case billing:refund*`). A leading `~` (or `!`) negates a pattern, so
+  `--case ~slow` is equivalent to `--skip slow`.
+- `agentprdiff record --list` / `check --list` prints suite and case names
+  without running anything, so you can discover what's filterable before
+  reaching for `--case`.
+- When a filter is active, the CLI now prints a per-suite header
+  (`running 2 of 4 cases in customer_support: ...`) so a partial selection is
+  visible at a glance. A filter that matches zero cases exits with code 2 and
+  prints the available case names — previously a typo'd filter would have
+  silently exited 0.
+
+### Changed
+
+- The CI workflow templates in `AGENTS.md`, `README.md`, and
+  `docs/ci-integration.md` now declare `permissions: contents: read`
+  explicitly. GitHub Advanced Security flags workflows without an explicit
+  permissions block, and least-privilege is the right default anyway.
+- Documented the recommended `.gitignore` entry (`artifacts/agentprdiff*.json`)
+  alongside every CI snippet that uses `--json-out artifacts/...`. The path
+  uploads cleanly as a CI build artifact, but the same file lands on every
+  local run; without an ignore line it eventually gets `git add`-ed by
+  accident.
+
+### Documentation
+
+- New "API keys" section in `AGENTS.md` covering both key surfaces (the
+  production agent's own keys vs. agentprdiff's semantic-judge keys —
+  `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `AGENTGUARD_JUDGE` with the
+  silent fake_judge fallback), local setup options (.env / shell export /
+  direnv), CI secret wiring, and a short list of "never do this." Adopting
+  AI agents are now instructed to explicitly prompt the user about which
+  env var their production agent reads, whether to use a real semantic
+  judge in CI, and to verify `.env` is gitignored.
+- The scaffolded `.github/workflows/agentprdiff.yml` now includes both
+  `OPENAI_API_KEY` and an optional `ANTHROPIC_API_KEY` (for the semantic
+  judge) with explanatory comments. The scaffolded `suites/README.md` has a
+  new "Setup" section walking through local key configuration.
+- New "Rerun semantics" section in `AGENTS.md` (referenced from README and
+  `docs/ci-integration.md`) covering what every subcommand does on the
+  second invocation: `record` overwrites baselines in place, `check`
+  accumulates a timestamped directory under `.agentprdiff/runs/` on every
+  call (gitignored; `rm -rf` to clean), `--json-out PATH` overwrites a
+  single file, and `scaffold`/`init` refuse-to-overwrite / are idempotent.
+  Adopting AI agents are now instructed to surface the `runs/` accumulation
+  behavior to the human user during handoff — it's the only one of the
+  four that creates new files on every invocation.
+
 ## [0.2.1] — 2026-04-26
 
 ### Changed
