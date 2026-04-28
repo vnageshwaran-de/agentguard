@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Native `AsyncOpenAI` support in `agentprdiff.adapters.openai`.** The same
+  `instrument_client` and `instrument_tools` API now works with the async
+  OpenAI client — and any async OpenAI-compatible provider (Groq, Gemini,
+  OpenRouter, Ollama, vLLM, Together, Fireworks, DeepInfra). The adapter
+  inspects `client.chat.completions.create` at `with`-block entry; if it's
+  a coroutine function, an awaitable patched method is installed and the
+  user's `await client.chat.completions.create(...)` call sites work
+  unchanged. `instrument_tools` matches per-tool: `async def` tools come
+  back as `async def` wrappers (`await tools[name](**args)`), sync tools
+  stay sync — a single `TOOL_MAP` may freely mix the two. The `with` block
+  is a regular `with`, not `async with`, since the patch is bound to the
+  client instance rather than the running event loop. agentprdiff's runner
+  remains sync; async agents bridge with `asyncio.run` in their
+  `eval_agent` entry point. Removes the previous adoption recommendation
+  to use manual `Trace.record_llm_call` instrumentation for async agents.
+- **Updated `--recipe async-openai` scaffold** to use the new adapter
+  natively. The generated `_eval_agent.py` no longer carries TODO markers
+  for manual instrumentation; it imports `instrument_client` /
+  `instrument_tools` and wraps an async tool-calling loop with an
+  `asyncio.run` bridge to agentprdiff's sync runner.
+- **`agentprdiff review <suite_file>`** — new subcommand for local iteration
+  on a single failing case. Runs the same comparison `check` does, but
+  renders one verbose panel per case (input echo, full assertion table with
+  `was → now` baseline-vs-current marks, per-metric deltas for cost /
+  latency / prompt and completion tokens, tool-sequence diff, and a unified
+  output diff in its own panel when output changed) and **always exits 0**
+  so it can sit inside watcher / `entr` / `fzf` loops without flipping the
+  shell red on every regression. Accepts the same `--case` / `--skip` /
+  `--list` flags as `record` and `check`. The CI gate stays `agentprdiff
+  check`; `review` is the `pytest -k` of agentprdiff. New `ReviewReporter`
+  in `agentprdiff.reporters` powers the rendering and is reusable by
+  third-party tooling.
 - **`agentprdiff scaffold <name>`** — new subcommand that stamps out the
   canonical adoption layout (`suites/__init__.py`, `_eval_agent.py`,
   `_stubs.py`, `<name>.py`, `<name>_cases.md`, `suites/README.md`, and

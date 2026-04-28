@@ -55,7 +55,7 @@ agentprdiff record suite.py     # save this run as the baseline
 agentprdiff check  suite.py     # in CI: diff vs baseline, exit 1 on regression
 ```
 
-That's the whole product. Four CLI commands. One Python file. Zero framework lock-in.
+That's the whole product. Five CLI commands (`init`, `record`, `check`, `review`, `scaffold`). One Python file. Zero framework lock-in.
 
 ## What's in the box
 
@@ -65,7 +65,7 @@ That's the whole product. Four CLI commands. One Python file. Zero framework loc
 - **Diff engine** — per-case `TraceDelta` with assertion pass/fail changes, cost delta, latency delta, tool-sequence changes, and a unified output diff.
 - **CI-ready CLI** — exit 1 on regression, `--json-out` for artifact archiving, Rich-formatted terminal output.
 - **Zero SDK lock-in** — works with OpenAI, Anthropic, Gemini, Bedrock, LangChain, LangGraph, LlamaIndex, Vercel AI SDK, custom wrappers — if you can wrap your agent in a function, `agentprdiff` can test it.
-- **One-line SDK adapters** — `with instrument_client(client) as trace:` automatically records every LLM and tool call when you're on the OpenAI Python SDK (or any OpenAI-compatible provider — Groq / Gemini / OpenRouter / Ollama / vLLM) or the Anthropic SDK. No manual `Trace` wiring required.
+- **One-line SDK adapters** — `with instrument_client(client) as trace:` automatically records every LLM and tool call when you're on the OpenAI Python SDK (sync **or** async — `AsyncOpenAI` is supported by the same context manager) or any OpenAI-compatible provider (Groq / Gemini / OpenRouter / Ollama / vLLM / Together / Fireworks / DeepInfra) or the Anthropic SDK. No manual `Trace` wiring required.
 
 ## How it compares
 
@@ -102,6 +102,7 @@ A common first-day question. Short version:
 
 - `record` — overwrites baselines in place. Re-recording an intentional change shows up as a regular git diff in your PR; that's the review surface.
 - `check` — creates a new timestamped directory under `.agentprdiff/runs/` on every invocation. It's gitignored by default, so it never reaches CI; clean local history any time with `rm -rf .agentprdiff/runs/`. `--json-out PATH` overwrites a single file at PATH.
+- `review` — same comparison as `check`, but renders one verbose panel per case and **always exits 0**. Designed for local iteration loops; not meant for CI. Writes to the same `.agentprdiff/runs/` directory.
 - `scaffold` — never overwrites. Skips files that already exist (`[skip]`) and writes the rest.
 - `init` — idempotent; running it twice does nothing the second time.
 
@@ -117,8 +118,8 @@ agentprdiff scaffold ai_content_summary --recipe sync-openai
 
 Writes the canonical layout (`suites/__init__.py`, `_eval_agent.py`, `_stubs.py`, `<name>.py`, `<name>_cases.md`, `suites/README.md`, and `.github/workflows/agentprdiff.yml`) with TODO markers where you wire in your agent. The `<name>_cases.md` file is a *case dossier* — reviewer-facing prose with one block per case (what it tests, input, assertions in plain English, file:line references to production code, and the application impact if the case regresses). Three recipes:
 
-- `sync-openai` (default): uses `instrument_client` from the OpenAI adapter.
-- `async-openai`: manual asyncio wrapper. Use until the async adapter ships in 0.3.
+- `sync-openai` (default): uses `instrument_client` from the OpenAI adapter with a sync `OpenAI()` client.
+- `async-openai`: same `instrument_client`, paired with an `asyncio.run` bridge so an `AsyncOpenAI` agent works with agentprdiff's sync runner. The adapter detects the async client at entry — no separate API.
 - `stubbed`: substitutes a single LLM helper instead of the SDK client. Best for summarization / classification / embedding-prep agents — see [`docs/adapters.md`](https://github.com/vnageshwaran-de/agentprdiff/blob/main/docs/adapters.md#stubbed-llm-boundary-pattern).
 
 The generated workflow includes `permissions: contents: read` so GHAS doesn't flag it. Pre-existing files are never overwritten.
@@ -129,7 +130,7 @@ You have two paths. Most agents need the first.
 
 ### Option A — SDK adapters (zero manual work)
 
-If your agent uses the OpenAI Python SDK (or any OpenAI-compatible provider — Groq, Gemini, OpenRouter, Ollama, vLLM, Together, Fireworks, DeepInfra) or the Anthropic SDK, the SDK adapter captures every model and tool call automatically:
+If your agent uses the OpenAI Python SDK — sync `OpenAI` **or** async `AsyncOpenAI`, including any OpenAI-compatible provider (Groq, Gemini, OpenRouter, Ollama, vLLM, Together, Fireworks, DeepInfra) — or the Anthropic SDK, the SDK adapter captures every model and tool call automatically:
 
 ```python
 from openai import OpenAI
@@ -146,7 +147,26 @@ def my_agent(query: str):
         return final_text, trace
 ```
 
-The patch is scoped to the specific client instance and reversed when the `with` block exits — no global SDK state is touched. Anthropic adopters use `agentprdiff.adapters.anthropic` with the same shape.
+For `AsyncOpenAI`, the same `instrument_client` works — it inspects `client.chat.completions.create` at entry and installs an awaitable patched method when the underlying one is `async def`. `instrument_tools` mirrors per-tool: `async def` tools come back awaitable, sync tools stay sync. The `with` block is still a regular `with`:
+
+```python
+import asyncio
+from openai import AsyncOpenAI
+from agentprdiff.adapters.openai import instrument_client, instrument_tools
+
+async def my_agent_async(query: str):
+    client = AsyncOpenAI()
+    with instrument_client(client) as trace:
+        tools = instrument_tools(TOOL_MAP, trace)
+        response = await client.chat.completions.create(...)
+        # ... await tools[name](**args) for async tools, tools[name](**args) for sync ...
+        return final_text, trace
+
+def my_agent(query: str):
+    return asyncio.run(my_agent_async(query))
+```
+
+The patch is scoped to the specific client instance and reversed when the `with` block exits — no global SDK state is touched. Anthropic adopters use `agentprdiff.adapters.anthropic` with the same shape (sync clients today; async Anthropic is on the roadmap).
 
 See [`docs/adapters.md`](https://github.com/vnageshwaran-de/agentprdiff/blob/main/docs/adapters.md) for the full reference, including pricing overrides, custom provider tags, and recipes for nested agents.
 
@@ -223,7 +243,7 @@ agentprdiff check suite.py    # exit 1; see the diff
 
 ### Running a subset of cases
 
-Iterating on a single failing case shouldn't require commenting out the rest. `record` and `check` both accept `--case` and `--skip` for narrowing a run:
+Iterating on a single failing case shouldn't require commenting out the rest. `record`, `check`, and `review` all accept `--case` and `--skip` for narrowing a run:
 
 ```bash
 # Discover what's available.
@@ -249,9 +269,25 @@ agentprdiff check suite.py --case "billing:refund*"
 
 A filter that matches zero cases exits 2 and prints the available case names — `--list` is the discoverable counterpart. The selection summary (`running 2 of 4 cases in <suite>: ...`) is printed before each suite runs so a partial match is never silent.
 
+### Reviewing one case (the local-iteration loop)
+
+`agentprdiff check` is built for CI: a compact summary table and exit 1 on regression. While you're iterating on a single case, that's the wrong shape — you want to see *everything* about that one case, and you don't want your shell going red between every keystroke. That's `agentprdiff review`:
+
+```bash
+# Verbose per-case panel: input, every assertion's was→now verdict,
+# cost/latency/token deltas, tool-sequence diff, output diff.
+agentprdiff review suite.py --case refund_happy_path
+
+# Same filter syntax as check / record — globs, negation, multi-pattern.
+agentprdiff review suite.py --case "*refund*"
+agentprdiff review suite.py --skip slow
+```
+
+`review` runs the same comparison `check` does (and writes to the same `.agentprdiff/runs/` directory) but **always exits 0**, even on regression — so it sits cleanly inside watcher loops (`entr`, `watchexec`, `fzf` previews). Use `check` when you want CI's exit semantics locally; reach for `review` while you're working. Think `pytest -k`.
+
 ## Status
 
-`agentprdiff` is **alpha** (0.2.x). The core model, CLI, and OpenAI / Anthropic SDK adapters are stable. LangChain/LangGraph adapters and a JS companion package for the Vercel AI SDK are on the 0.3 roadmap. See [`CHANGELOG.md`](https://github.com/vnageshwaran-de/agentprdiff/blob/main/CHANGELOG.md).
+`agentprdiff` is **alpha** (0.2.x). The core model, CLI, and OpenAI / Anthropic SDK adapters are stable. The OpenAI adapter covers both sync `OpenAI` and async `AsyncOpenAI` clients via the same `instrument_client` context manager. Async Anthropic, LangChain/LangGraph adapters, and a JS companion package for the Vercel AI SDK are on the 0.3 roadmap. See [`CHANGELOG.md`](https://github.com/vnageshwaran-de/agentprdiff/blob/main/CHANGELOG.md).
 
 Feedback, bug reports, and PRs extremely welcome. Open an issue or @ me.
 

@@ -1,14 +1,19 @@
 """Command-line interface for agentprdiff.
 
-Four subcommands:
+Five subcommands:
 
 * `agentprdiff init`    — scaffold a .agentprdiff/ directory
 * `agentprdiff record`  — record baselines for every suite in a file
 * `agentprdiff check`   — compare against baselines; exit 1 on regression
-* `agentprdiff diff`    — show the diff for the most recent run of a case
+* `agentprdiff review`  — verbose per-case diff for local iteration; exit 0
+* `agentprdiff diff`    — show the saved baseline trace for one case
 
-`record` and `check` accept ``--case`` / ``--skip`` filters and a ``--list``
-flag for case discovery; see :mod:`agentprdiff.filtering` for pattern syntax.
+`record`, `check`, and `review` accept ``--case`` / ``--skip`` filters and a
+``--list`` flag for case discovery; see :mod:`agentprdiff.filtering` for
+pattern syntax. ``review`` is the local-iteration counterpart to ``check``:
+it runs the same comparison but renders one detailed panel per case and
+always exits 0, the way ``pytest -k`` lets you focus on a single test
+without changing exit semantics.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ import click
 from .core import Suite
 from .filtering import apply_filter, parse_patterns
 from .loader import load_suites
-from .reporters import JsonReporter, TerminalReporter
+from .reporters import JsonReporter, ReviewReporter, TerminalReporter
 from .runner import Runner
 from .scaffold import VALID_RECIPES, scaffold
 from .store import BaselineStore
@@ -168,6 +173,43 @@ def cmd_check(
     sys.exit(1 if (any_regression and fail_on_regression) else 0)
 
 
+@main.command("review")
+@click.argument("suite_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@_CASE_OPTION
+@_SKIP_OPTION
+@_LIST_OPTION
+@click.pass_context
+def cmd_review(
+    ctx: click.Context,
+    suite_file: Path,
+    case_patterns: tuple[str, ...],
+    skip_patterns: tuple[str, ...],
+    list_only: bool,
+) -> None:
+    """Run cases in SUITE_FILE and print a detailed baseline-vs-current view.
+
+    Designed for local iteration on a single failing case — pair it with
+    ``--case`` the way you'd use ``pytest -k``. ``review`` always exits 0
+    so you can pipe it into a watcher / re-run loop without your shell
+    going red on every regression. Use ``agentprdiff check`` for the CI
+    gate.
+    """
+    store: BaselineStore = ctx.obj["store"]
+    runner = Runner(store)
+    reporter = ReviewReporter()
+
+    suites_all = load_suites(suite_file)
+    if list_only:
+        _print_listing(suites_all)
+        return
+
+    suites = _select_or_exit(suites_all, case_patterns, skip_patterns)
+
+    for s in suites:
+        report = runner.check(s)
+        reporter.render(report)
+
+
 @main.command("scaffold")
 @click.argument("name")
 @click.option(
@@ -177,8 +219,9 @@ def cmd_check(
     show_default=True,
     help=(
         "Eval-wrapper template to generate. "
-        "`sync-openai` uses instrument_client; `async-openai` writes a "
-        "manual asyncio wrapper; `stubbed` substitutes a single LLM helper "
+        "`sync-openai` uses instrument_client with a sync OpenAI client; "
+        "`async-openai` does the same with AsyncOpenAI plus an asyncio.run "
+        "bridge; `stubbed` substitutes a single LLM helper "
         "(see docs/adapters.md)."
     ),
 )

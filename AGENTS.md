@@ -67,7 +67,7 @@ Memorize this tree. Every adoption produces exactly this shape; deviating from i
 
 The Steps below produce these files in order. When you finish, your final `git status` should show *only* these paths added — no production-code modifications.
 
-> **Shortcut: scaffold first, fill in TODOs.** Run `agentprdiff scaffold <project_name> --recipe <recipe>` to lay down the whole canonical layout in one shot, then edit the generated files. Recipes: `sync-openai` (default; `instrument_client`), `async-openai` (manual asyncio wrapper, until the async adapter ships in 0.3), `stubbed` (substitutes a single LLM helper — see [`docs/adapters.md`](./docs/adapters.md#stubbed-llm-boundary-pattern)). The scaffold also writes `suites/<project_name>_cases.md` — the case dossier (per-case "what it tests / input / assertions / code impacted / application impact"). Existing files are never overwritten, so this is safe to run on a partially-built suite.
+> **Shortcut: scaffold first, fill in TODOs.** Run `agentprdiff scaffold <project_name> --recipe <recipe>` to lay down the whole canonical layout in one shot, then edit the generated files. Recipes: `sync-openai` (default; `instrument_client` with a sync `OpenAI()` client), `async-openai` (the same `instrument_client` plus an `asyncio.run` bridge — works natively with `AsyncOpenAI`), `stubbed` (substitutes a single LLM helper — see [`docs/adapters.md`](./docs/adapters.md#stubbed-llm-boundary-pattern)). The scaffold also writes `suites/<project_name>_cases.md` — the case dossier (per-case "what it tests / input / assertions / code impacted / application impact"). Existing files are never overwritten, so this is safe to run on a partially-built suite.
 
 ---
 
@@ -128,7 +128,7 @@ agentprdiff needs the agent to return `(output, Trace)` instead of just `output`
 
 ### Recipe A — agent uses OpenAI Python SDK or any OpenAI-compatible provider
 
-(Groq, Gemini's compat endpoint, OpenRouter, Ollama, vLLM, Together, Fireworks, DeepInfra all fit here.)
+(Groq, Gemini's compat endpoint, OpenRouter, Ollama, vLLM, Together, Fireworks, DeepInfra all fit here.) **`AsyncOpenAI` is supported by the same adapter** — the recipe below is the sync version; the [Async OpenAI variant](#recipe-a-async--agent-uses-asyncopenai) immediately after it is the same shape with an `asyncio.run` bridge.
 
 Create `suites/_eval_agent.py`:
 
@@ -201,6 +201,82 @@ def eval_agent(user_prompt: str) -> tuple[str, Trace]:
 ```
 
 If the production agent doesn't expose a `_call_llm` helper, inline the `client.chat.completions.create(...)` call directly. The point is that the call site executes inside the `with instrument_client(...)` block.
+
+### Recipe A async — agent uses AsyncOpenAI
+
+Use this when the production agent calls `await client.chat.completions.create(...)` on an `AsyncOpenAI` (or async OpenAI-compatible) client. The adapter detects the async client at `instrument_client` entry and installs an awaitable patched `create`; tools that are `async def` are wrapped as awaitable, sync tools stay sync. agentprdiff's runner is sync, so the public `eval_agent` bridges to the async inner function via `asyncio.run`.
+
+```python
+"""Eval-mode wrapper for an AsyncOpenAI agent."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+from agentprdiff import Trace
+from agentprdiff.adapters.openai import instrument_client, instrument_tools
+
+from <PROJECT_AGENT_MODULE> import SYSTEM_PROMPT, TOOLS_SPEC
+from <PROJECT_LLM_PROVIDER_MODULE> import get_async_client, get_model
+
+from ._stubs import STUB_TOOL_MAP
+
+MAX_ITERATIONS = 8
+
+
+async def _eval_agent_async(user_prompt: str) -> tuple[str, Trace]:
+    client = get_async_client()
+    model = get_model()
+    trace = Trace(suite_name="", case_name="", input=user_prompt)
+    trace.metadata.update({"model": model})
+
+    final_text = ""
+    with instrument_client(client, trace=trace) as t:
+        tools = instrument_tools(STUB_TOOL_MAP, t)  # async tools come back awaitable
+        messages: list[Any] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+        for _ in range(MAX_ITERATIONS):
+            response = await client.chat.completions.create(
+                model=model, messages=messages, tools=TOOLS_SPEC,
+            )
+            msg = response.choices[0].message
+            if not msg.tool_calls:
+                final_text = msg.content or ""
+                break
+            messages.append(msg)
+            for tc in msg.tool_calls:
+                fn_name = tc.function.name
+                fn_args = json.loads(tc.function.arguments or "{}")
+                fn = tools.get(fn_name)
+                if fn is None:
+                    fn_result = {"error": f"unknown tool {fn_name!r}"}
+                elif asyncio.iscoroutinefunction(fn):
+                    fn_result = await fn(**fn_args)
+                else:
+                    fn_result = fn(**fn_args)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id, "content": json.dumps(fn_result),
+                })
+        else:
+            final_text = "[agent: hit MAX_ITERATIONS]"
+
+    return final_text, trace
+
+
+def eval_agent(user_prompt: str) -> tuple[str, Trace]:
+    """Sync entry point — agentprdiff's runner calls this."""
+    return asyncio.run(_eval_agent_async(user_prompt))
+```
+
+Notes:
+
+- The `with` block is a regular `with`, not `async with` — the patch is bound to the client instance, not to an event loop.
+- A single `TOOL_MAP` may mix sync and async tools; the wrapper shape is decided per entry. `asyncio.iscoroutinefunction(fn)` is the safe runtime check before deciding whether to `await fn(...)`.
+- If your project already has its own loop manager (e.g., a long-running test fixture) and you don't want `asyncio.run` per case, replace the bridge with whatever scheduling primitive you use — only the inner `_eval_agent_async` matters to agentprdiff.
 
 ### Recipe B — agent uses the Anthropic Messages API
 
@@ -424,6 +500,7 @@ Inspect the table the recorder prints:
 
 - If a case is marked `REGRESSION` in record mode, the assertions failed on first run. **This is a real finding.** Either the agent has a bug, or the case is over-asserted, or a stub returned unexpected data. Investigate before proceeding.
 - While debugging a single failing case, narrow the loop with `--case`: `agentprdiff record suites/<project_name>.py --case <case_name>` re-records just that one case (substring or glob; case-insensitive). Use `--list` to see what's available, and `--skip <pat>` (or `--case ~<pat>`) to drop noisy cases. A filter that matches nothing exits 2 — no silent zero-runs.
+- For *inspecting* (not re-recording) a case during iteration, use `agentprdiff review suites/<project_name>.py --case <case_name>`. It runs the same comparison `check` does but renders one verbose panel per case — input, every assertion's `was → now` verdict, cost / latency / token deltas, tool-sequence diff, and a unified output diff — and exits 0 even on regression so a watcher loop doesn't keep tripping. Think `pytest -k`. Reach for `check` when you want a CI gate, `review` when you're staring at one case.
 - If everything passes, commit:
 
 ```bash
@@ -620,6 +697,24 @@ ls artifacts/
 #  agentprdiff.json     ← single file, overwritten on each run
 ```
 
+### `agentprdiff review` — same as check, but exits 0 and renders verbosely
+
+`review` is the local-iteration counterpart to `check`. Mechanically it does what `check` does — runs the agent, loads the baseline, computes the same `TraceDelta` — but with two differences:
+
+1. **Verbose rendering.** Instead of the compact summary table, each case gets its own panel: input echo, full assertion table with baseline-vs-current marks (`✓ → ✗` for regressions, `✗ → ✓` for improvements), per-metric deltas (cost, latency, prompt and completion tokens), tool-sequence diff (highlighted when changed), and a unified output diff in its own panel when the output changed. When there's no baseline yet, the panel still renders — it just shows the raw output and skips the metric/tool sections.
+2. **Always exits 0.** A regression doesn't change the exit code. This is so you can pipe `review` into a watcher / `entr` / `fzf` loop without your shell going red on every iteration. Use `check` for the CI gate; use `review` while you're working.
+
+The same `runs/` directory accumulates per invocation, exactly as `check` does — `review` is just `check` with a different reporter. Wipe with `rm -rf .agentprdiff/runs/`.
+
+```bash
+agentprdiff review suites/<project>.py --case <one_case>     # one panel
+agentprdiff review suites/<project>.py --case "*refund*"     # glob
+agentprdiff review suites/<project>.py --skip slow           # all but slow
+agentprdiff review suites/<project>.py --list                # discover names
+```
+
+A zero-match filter exits 2 with the same "available cases" hint as `check` and `record`, so a typo never silently runs nothing.
+
 ### `agentprdiff scaffold <name>` — refuses to overwrite
 
 Second run skips every file that already exists and prints `[skip]` for each. Safe to rerun on a partially-built project (e.g., to copy in a missing template file after deleting one).
@@ -659,6 +754,7 @@ agentprdiff init
 | `record` | overwrites baselines in place | no | yes (intentional re-record) |
 | `check` | new timestamped dir under `runs/` | yes (gitignored) | yes; cleanup with `rm -rf .agentprdiff/runs/` |
 | `check --json-out PATH` | overwrites PATH | no (the JSON itself) | yes |
+| `review` | new timestamped dir under `runs/` (same as `check`); always exits 0 | yes (gitignored) | yes; designed for tight loops |
 | `scaffold` | skips existing files | no | yes (use to top up missing templates) |
 | `init` | no-op | no | yes |
 
@@ -779,8 +875,9 @@ Tell the user:
 4. Any regression `record` itself surfaced (these are real findings; flag them prominently).
 5. The exact commands they should know:
    - CI: `agentprdiff check suites/<project_name>.py`
-   - Iterate on one case: `agentprdiff check suites/<project_name>.py --case <case_name>`
-   - Discover case names: `agentprdiff check suites/<project_name>.py --list`
+   - Iterate on one case (verbose, exit 0): `agentprdiff review suites/<project_name>.py --case <case_name>`
+   - Iterate on one case (re-runs `check` semantics, exit 1 on regression): `agentprdiff check suites/<project_name>.py --case <case_name>`
+   - Discover case names: `agentprdiff check suites/<project_name>.py --list` (or `agentprdiff review … --list`)
 6. **API keys — ask explicitly, do not assume.** This is the single most common adoption-failure cause. Ask them:
    - "Which env var does your production agent read?" Update the workflow YAML to match.
    - "Real semantic judge in CI, or fake_judge?" If real, add the appropriate secret (`ANTHROPIC_API_KEY` is cheaper). Warn them that without a key, `semantic()` graders silently fall back to keyword matching — they'll see PASS without the LLM judge running.
@@ -789,6 +886,7 @@ Tell the user:
 7. **Rerun behavior** (one sentence each — the user will hit these within a day):
    - `record` rewrites the baseline files in place. Re-recording an intentional change shows up as a normal git diff in their PR.
    - `check` adds a new timestamped directory under `.agentprdiff/runs/` on every invocation. It's git-ignored so it never reaches CI, but they can wipe local history any time with `rm -rf .agentprdiff/runs/`.
+   - `review` is the local-iteration command — same diff `check` produces, rendered verbosely per case, exits 0 even on regression. Use it inside watcher loops; reach for `check` only when you want the CI gate's exit semantics locally.
    - `scaffold` and `init` are safe to rerun — they refuse to overwrite existing files and skip cleanly.
    - See [Rerun semantics](#rerun-semantics--what-each-command-does-on-the-second-run) for the full rules.
 
