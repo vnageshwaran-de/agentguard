@@ -169,44 +169,45 @@ def eval_agent(query: str) -> tuple[str, Trace]:
 
 _TPL_EVAL_ASYNC = '''"""Eval-mode wrapper for the {name} agent (async OpenAI recipe).
 
-Until the async adapter lands in 0.3, manual instrumentation is the cleanest
-path for AsyncOpenAI / AsyncAnthropic agents. Pattern: run the async agent
-under :func:`asyncio.run`, build the Trace by hand or via the
-"stubbed-helper" pattern (see docs/adapters.md).
+For agents built on ``AsyncOpenAI`` (or any other async OpenAI-compatible
+client). ``instrument_client`` detects the async client automatically and
+installs an awaitable patched ``create``; ``instrument_tools`` returns
+``async def`` wrappers for tools that are themselves coroutine functions, so
+``await tools[name](**args)`` works just like the underlying tool.
 
-If your agent wraps every LLM call in a single helper function, prefer the
-``stubbed`` recipe instead of this one.
+The ``with`` block is a regular ``with`` (not ``async with``) — the patch is
+bound to the client *instance*, not the running event loop, so context
+management is event-loop-agnostic.
+
+agentprdiff's runner is sync, so the public ``eval_agent`` bridges with
+``asyncio.run``. If your tests already manage their own loop, replace that
+bridge — the inner async function is what matters.
 """
 
 from __future__ import annotations
 
 import asyncio
 
-from agentprdiff import LLMCall, Trace
+# TODO: import your production async agent.
+# from agent import run_agent_async, get_async_client
 
-# TODO: import your production agent.
-# from agent import run_agent
+from agentprdiff import Trace
+from agentprdiff.adapters.openai import instrument_client, instrument_tools
 
 from suites._stubs import STUB_TOOL_MAP
 
 
 async def _eval_agent_async(query: str) -> tuple[str, Trace]:
+    client = get_async_client()  # noqa: F821 — TODO: replace with your factory
     trace = Trace(suite_name="", case_name="", input=query)
 
-    # TODO: instrument the agent's LLM call(s). Two practical options:
-    #   (a) Monkey-patch the production helper that wraps the LLM call and
-    #       record an LLMCall yourself onto `trace`. See docs/adapters.md
-    #       "stubbed LLM-boundary pattern" for a worked example.
-    #   (b) Inject a wrapper client that records each call onto `trace`
-    #       before delegating to the real AsyncOpenAI / AsyncAnthropic.
-    output = await run_agent(query, tools=STUB_TOOL_MAP)  # noqa: F821
-
-    # Optional: record an LLMCall summary so cost_lt_usd / latency_lt_ms
-    # graders have something to evaluate. Numbers should be plausible, not
-    # real billing data.
-    # trace.record_llm_call(LLMCall(provider="stub", model="async-stub", ...))
-
-    return output, trace
+    with instrument_client(client, trace=trace) as t:
+        # `tools` is the dict your production loop already takes. Each
+        # wrapper matches the underlying tool's shape — async tools come
+        # back as `async def`, sync tools as plain functions.
+        tools = instrument_tools(STUB_TOOL_MAP, t)
+        output = await run_agent_async(query, client=client, tools=tools)  # noqa: F821
+        return output, trace
 
 
 def eval_agent(query: str) -> tuple[str, Trace]:

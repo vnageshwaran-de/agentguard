@@ -141,9 +141,50 @@ The 0.2 adapter does **not** instrument streaming responses (`stream=True`). Reg
 
 ### Async clients
 
-For `AsyncOpenAI` / `AsyncAnthropic`, use the same adapter; the patch wraps the awaitable transparently because `client.chat.completions.create` is itself awaitable in those SDKs and the adapter measures wall-clock around the await.
+`AsyncOpenAI` is supported natively by the OpenAI adapter — the same `instrument_client` context manager. The adapter inspects `client.chat.completions.create` at entry; if it's a coroutine function (which it is on `AsyncOpenAI`), an awaitable patched `create` is installed. Sync vs async is detected per-instance; you don't pass a flag.
 
-> Note: 0.2 supports the synchronous client API. Async support is on the 0.3 roadmap. If your agent is async, manual instrumentation is the safe path until then.
+The `with` block stays a regular `with`, **not** `async with` — the patch is bound to the client instance, not the running event loop:
+
+```python
+import asyncio
+from openai import AsyncOpenAI
+from agentprdiff.adapters.openai import instrument_client, instrument_tools
+
+TOOL_MAP = {
+    "lookup_order": lookup_order,            # def
+    "send_email":   send_email_async,        # async def — both fine in one map
+}
+
+async def my_agent_async(query: str):
+    client = AsyncOpenAI()
+    with instrument_client(client) as trace:
+        tools = instrument_tools(TOOL_MAP, trace)
+        messages = [{"role": "user", "content": query}]
+        while True:
+            resp = await client.chat.completions.create(
+                model="gpt-4o-mini", messages=messages, tools=OPENAI_TOOLS_SPEC,
+            )
+            msg = resp.choices[0].message
+            if not msg.tool_calls:
+                return msg.content, trace
+            messages.append(msg)
+            for tc in msg.tool_calls:
+                args = json.loads(tc.function.arguments)
+                fn = tools[tc.function.name]
+                # `fn` is awaitable iff the underlying tool was async def.
+                result = await fn(**args) if asyncio.iscoroutinefunction(fn) else fn(**args)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id, "content": json.dumps(result),
+                })
+
+def my_agent(query: str):
+    """agentprdiff's runner is sync; bridge with asyncio.run."""
+    return asyncio.run(my_agent_async(query))
+```
+
+`instrument_tools` mirrors the same logic per-tool: a tool that's `async def` comes back as an `async def` wrapper (you `await` it); a regular function comes back as a regular function. You can mix the two in one `TOOL_MAP` — the adapter dispatches per entry.
+
+`AsyncAnthropic` support follows the same pattern but ships separately; the Anthropic adapter currently covers the sync client only. If you need async Anthropic today, use the [stubbed LLM-boundary pattern](#stubbed-llm-boundary-pattern) below or open an issue.
 
 ### Stubbed LLM-boundary pattern
 
@@ -152,7 +193,7 @@ Use this when the production code wraps a single LLM call in a helper (`summariz
 The cleaner test boundary is the helper, not the SDK client. Substitute the helper with a deterministic stub and exercise the orchestration around it. Three reasons this is better than `instrument_client` for this shape of code:
 
 1. The interesting logic is what the agent does *with* the LLM output, not the LLM call itself. Stubbing the boundary lets you assert on that without paying for a real call or maintaining brittle SDK-shape fixtures.
-2. Async vs sync, OpenAI vs Anthropic vs whatever — the stub doesn't care. It returns a string. This is the only path that's clean today if your client is `AsyncOpenAI` (until the async adapter lands in 0.3).
+2. Async vs sync, OpenAI vs Anthropic vs whatever — the stub doesn't care. It returns a string. (For `AsyncOpenAI` the [native async adapter](#async-clients) is the cleanest path; for `AsyncAnthropic` or other async SDKs, this stubbed-helper pattern is still the simplest.)
 3. You can vary the LLM output deliberately to test downstream behavior: "given this exact summary, does the entity extractor produce the right list?" — useful for the post-processing edge cases.
 
 The trade-off is real: **this recipe does not test the prompt itself.** It tests everything except the prompt. Pair it with a small live-API suite (`--case prompt_*`) that runs only on prompt changes if you also need prompt-quality regression coverage.

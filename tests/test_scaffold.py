@@ -146,9 +146,15 @@ def test_scaffold_eval_agent_recipe_specific_imports(tmp_path):
     assert "from agentprdiff.adapters.openai import" in sync_src
     assert "instrument_client" in sync_src
 
+    # The async recipe now uses instrument_client too — it transparently
+    # installs an awaitable patched create on AsyncOpenAI clients. The thing
+    # that distinguishes async from sync is the asyncio.run bridge, not
+    # whether the adapter is used.
+    assert "from agentprdiff.adapters.openai import" in async_src
+    assert "instrument_client" in async_src
     assert "import asyncio" in async_src
     assert "asyncio.run" in async_src
-    assert "instrument_client" not in async_src  # async path is manual
+    assert "async def _eval_agent_async" in async_src
 
     assert "HELPER_NAME" in stub_src
     assert "_fake_helper" in stub_src

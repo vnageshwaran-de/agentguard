@@ -7,14 +7,14 @@ outside the ``with`` block.
 
 This adapter works with any SDK that uses the OpenAI Python client shape:
 
-* OpenAI itself
+* OpenAI / **AsyncOpenAI** itself
 * Groq (``base_url="https://api.groq.com/openai/v1"``)
 * Google Gemini's OpenAI-compatible endpoint
 * OpenRouter
 * Ollama (``base_url="http://localhost:11434/v1"``)
 * vLLM, Together, Fireworks, DeepInfra, Anyscale, etc.
 
-Usage::
+Sync usage::
 
     from agentprdiff.adapters.openai import instrument_client, instrument_tools
 
@@ -25,6 +25,28 @@ Usage::
             # ...standard OpenAI tool-calling loop, unchanged...
             return final_text, trace
 
+Async usage — same API. ``instrument_client`` detects an ``AsyncOpenAI``
+client (``client.chat.completions.create`` is a coroutine function) and
+installs an awaitable patched method automatically. The ``with`` block
+itself stays a plain ``with`` — the patch is bound to the client instance,
+not the running event loop::
+
+    from openai import AsyncOpenAI
+    from agentprdiff.adapters.openai import instrument_client, instrument_tools
+
+    async def my_agent_async(query: str):
+        client = AsyncOpenAI(api_key=...)
+        with instrument_client(client) as trace:
+            tools = instrument_tools(TOOL_MAP, trace)
+            response = await client.chat.completions.create(...)
+            # ...async tool-calling loop, unchanged; tool wrappers are
+            # awaitable iff the underlying tool is `async def`...
+            return final_text, trace
+
+    def my_agent(query: str):
+        # agentprdiff's runner is sync — bridge with asyncio.run.
+        return asyncio.run(my_agent_async(query))
+
 The Trace's ``suite_name`` / ``case_name`` / ``input`` are filled in by
 ``run_agent`` after the agent returns; you can leave them blank inside the
 adapter.
@@ -32,8 +54,9 @@ adapter.
 
 from __future__ import annotations
 
+import asyncio
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from typing import Any
 
@@ -187,59 +210,18 @@ def instrument_client(
     had_instance_attr = "create" in vars(completions)
     instance_attr_value = vars(completions).get("create")
 
-    def patched_create(*args: Any, **kwargs: Any) -> Any:
-        start = time.perf_counter()
-        try:
-            response = original_create(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
-            elapsed_ms = (time.perf_counter() - start) * 1000.0
-            # Record a failed LLMCall so the trace shows what happened.
-            trace.record_llm_call(
-                LLMCall(
-                    provider=provider_str,
-                    model=str(kwargs.get("model", "")),
-                    input_messages=_serialize_messages(kwargs.get("messages")),
-                    output_text=f"<exception: {type(exc).__name__}: {exc}>",
-                    latency_ms=elapsed_ms,
-                )
-            )
-            raise
-
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-
-        # Pull usage / model / output safely; some compatible servers omit
-        # fields we'd like to have.
-        usage = getattr(response, "usage", None)
-        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-        model_id = str(getattr(response, "model", "") or kwargs.get("model", "") or "")
-
-        choices = getattr(response, "choices", None) or []
-        message = getattr(choices[0], "message", None) if choices else None
-        output_text = getattr(message, "content", None) or "" if message is not None else ""
-        tool_calls_summary = _extract_tool_calls(message) if message is not None else []
-
-        cost = estimate_cost_usd(
-            model_id,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            prices=prices,
+    # AsyncOpenAI's `create` is `async def`; the sync OpenAI's is plain. Pick
+    # the right shape so callers get an awaitable iff the original was one.
+    is_async = asyncio.iscoroutinefunction(original_create)
+    patched_create = (
+        _make_async_patched_create(
+            original_create, trace=trace, provider=provider_str, prices=prices
         )
-
-        trace.record_llm_call(
-            LLMCall(
-                provider=provider_str,
-                model=model_id,
-                input_messages=_serialize_messages(kwargs.get("messages")),
-                output_text=output_text,
-                tool_calls=tool_calls_summary,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                cost_usd=cost,
-                latency_ms=elapsed_ms,
-            )
+        if is_async
+        else _make_sync_patched_create(
+            original_create, trace=trace, provider=provider_str, prices=prices
         )
-        return response
+    )
 
     # Apply the patch on this specific instance only.
     completions.create = patched_create  # type: ignore[method-assign]
@@ -256,6 +238,141 @@ def instrument_client(
                 del completions.create  # type: ignore[attr-defined]
 
 
+# ---------------------------------------------------------------------------
+# Patched-create factories.
+#
+# Sync and async paths share everything except the call-and-await step. We
+# factor the shared response-parsing into _record_completion so the timing
+# code stays a thin wrapper above it. Avoids drift between the two paths.
+# ---------------------------------------------------------------------------
+
+
+def _record_completion(
+    response: Any,
+    *,
+    trace: Trace,
+    kwargs: Mapping[str, Any],
+    elapsed_ms: float,
+    provider: str,
+    prices: PriceTable | None,
+) -> None:
+    """Extract usage/output/tool-calls from an OpenAI-shaped response and
+    record an ``LLMCall`` onto ``trace``. Shared by sync and async patches."""
+    # Pull usage / model / output safely; some compatible servers omit fields
+    # we'd like to have.
+    usage = getattr(response, "usage", None)
+    prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    model_id = str(getattr(response, "model", "") or kwargs.get("model", "") or "")
+
+    choices = getattr(response, "choices", None) or []
+    message = getattr(choices[0], "message", None) if choices else None
+    output_text = getattr(message, "content", None) or "" if message is not None else ""
+    tool_calls_summary = _extract_tool_calls(message) if message is not None else []
+
+    cost = estimate_cost_usd(
+        model_id,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        prices=prices,
+    )
+
+    trace.record_llm_call(
+        LLMCall(
+            provider=provider,
+            model=model_id,
+            input_messages=_serialize_messages(kwargs.get("messages")),
+            output_text=output_text,
+            tool_calls=tool_calls_summary,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=cost,
+            latency_ms=elapsed_ms,
+        )
+    )
+
+
+def _record_failure(
+    exc: BaseException,
+    *,
+    trace: Trace,
+    kwargs: Mapping[str, Any],
+    elapsed_ms: float,
+    provider: str,
+) -> None:
+    trace.record_llm_call(
+        LLMCall(
+            provider=provider,
+            model=str(kwargs.get("model", "")),
+            input_messages=_serialize_messages(kwargs.get("messages")),
+            output_text=f"<exception: {type(exc).__name__}: {exc}>",
+            latency_ms=elapsed_ms,
+        )
+    )
+
+
+def _make_sync_patched_create(
+    original_create: Callable[..., Any],
+    *,
+    trace: Trace,
+    provider: str,
+    prices: PriceTable | None,
+) -> Callable[..., Any]:
+    def patched_create(*args: Any, **kwargs: Any) -> Any:
+        start = time.perf_counter()
+        try:
+            response = original_create(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            _record_failure(
+                exc, trace=trace, kwargs=kwargs, elapsed_ms=elapsed_ms, provider=provider
+            )
+            raise
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        _record_completion(
+            response,
+            trace=trace,
+            kwargs=kwargs,
+            elapsed_ms=elapsed_ms,
+            provider=provider,
+            prices=prices,
+        )
+        return response
+
+    return patched_create
+
+
+def _make_async_patched_create(
+    original_create: Callable[..., Awaitable[Any]],
+    *,
+    trace: Trace,
+    provider: str,
+    prices: PriceTable | None,
+) -> Callable[..., Awaitable[Any]]:
+    async def patched_create(*args: Any, **kwargs: Any) -> Any:
+        start = time.perf_counter()
+        try:
+            response = await original_create(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            _record_failure(
+                exc, trace=trace, kwargs=kwargs, elapsed_ms=elapsed_ms, provider=provider
+            )
+            raise
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        _record_completion(
+            response,
+            trace=trace,
+            kwargs=kwargs,
+            elapsed_ms=elapsed_ms,
+            provider=provider,
+            prices=prices,
+        )
+        return response
+
+    return patched_create
+
+
 def instrument_tools(
     tool_map: Mapping[str, Callable[..., Any]],
     trace: Trace,
@@ -268,18 +385,71 @@ def instrument_tools(
         tools = instrument_tools(TOOL_MAP, trace)
         result = tools[fn_name](**fn_args)
 
-    Each call records:
+    For async tools (``async def``), the wrapper is itself ``async def``, so
+    awaiting it works exactly like awaiting the original::
+
+        result = await tools[fn_name](**fn_args)
+
+    The choice is made per-tool — a tool map can mix sync and async entries
+    and each wrapper matches the underlying callable. Each call records:
 
     * ``name`` — the dict key
     * ``arguments`` — the kwargs (and positional args under ``"_args"`` if any)
     * ``result`` — the return value (or None if the call raised)
-    * ``latency_ms`` — wall-clock latency
+    * ``latency_ms`` — wall-clock latency (await time included for async)
     * ``error`` — exception text on failure
     """
     wrapped: dict[str, Callable[..., Any]] = {}
     for name, fn in tool_map.items():
-        wrapped[name] = _make_tool_wrapper(name, fn, trace)
+        if asyncio.iscoroutinefunction(fn):
+            wrapped[name] = _make_async_tool_wrapper(name, fn, trace)
+        else:
+            wrapped[name] = _make_tool_wrapper(name, fn, trace)
     return wrapped
+
+
+def _record_tool_success(
+    *,
+    trace: Trace,
+    name: str,
+    arguments: dict[str, Any],
+    result: Any,
+    elapsed_ms: float,
+) -> None:
+    trace.record_tool_call(
+        ToolCall(
+            name=name,
+            arguments=arguments,
+            result=_jsonable(result),
+            latency_ms=elapsed_ms,
+        )
+    )
+
+
+def _record_tool_failure(
+    *,
+    trace: Trace,
+    name: str,
+    arguments: dict[str, Any],
+    exc: BaseException,
+    elapsed_ms: float,
+) -> None:
+    trace.record_tool_call(
+        ToolCall(
+            name=name,
+            arguments=arguments,
+            result=None,
+            latency_ms=elapsed_ms,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    )
+
+
+def _arguments_dict(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    arguments: dict[str, Any] = dict(kwargs)
+    if args:
+        arguments["_args"] = list(args)
+    return arguments
 
 
 def _make_tool_wrapper(
@@ -289,35 +459,65 @@ def _make_tool_wrapper(
 ) -> Callable[..., Any]:
     def _wrapped(*args: Any, **kwargs: Any) -> Any:
         start = time.perf_counter()
-        arguments: dict[str, Any] = dict(kwargs)
-        if args:
-            arguments["_args"] = list(args)
+        arguments = _arguments_dict(args, kwargs)
         try:
             result = fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = (time.perf_counter() - start) * 1000.0
-            trace.record_tool_call(
-                ToolCall(
-                    name=name,
-                    arguments=arguments,
-                    result=None,
-                    latency_ms=elapsed_ms,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
+            _record_tool_failure(
+                trace=trace,
+                name=name,
+                arguments=arguments,
+                exc=exc,
+                elapsed_ms=elapsed_ms,
             )
             raise
         elapsed_ms = (time.perf_counter() - start) * 1000.0
-        trace.record_tool_call(
-            ToolCall(
-                name=name,
-                arguments=arguments,
-                result=_jsonable(result),
-                latency_ms=elapsed_ms,
-            )
+        _record_tool_success(
+            trace=trace,
+            name=name,
+            arguments=arguments,
+            result=result,
+            elapsed_ms=elapsed_ms,
         )
         return result
 
     _wrapped.__name__ = f"instrumented_{name}"
+    _wrapped.__doc__ = getattr(fn, "__doc__", None)
+    return _wrapped
+
+
+def _make_async_tool_wrapper(
+    name: str,
+    fn: Callable[..., Awaitable[Any]],
+    trace: Trace,
+) -> Callable[..., Awaitable[Any]]:
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        start = time.perf_counter()
+        arguments = _arguments_dict(args, kwargs)
+        try:
+            result = await fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            _record_tool_failure(
+                trace=trace,
+                name=name,
+                arguments=arguments,
+                exc=exc,
+                elapsed_ms=elapsed_ms,
+            )
+            raise
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        _record_tool_success(
+            trace=trace,
+            name=name,
+            arguments=arguments,
+            result=result,
+            elapsed_ms=elapsed_ms,
+        )
+        return result
+
+    _wrapped.__name__ = f"instrumented_async_{name}"
     _wrapped.__doc__ = getattr(fn, "__doc__", None)
     return _wrapped
 
