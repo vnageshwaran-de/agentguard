@@ -449,9 +449,22 @@ Rules:
 
 ### Also write the case dossier — `suites/<project>_cases.md`
 
-This is MANDATORY. The suite file is data that machines read; the dossier is prose that humans read. PR reviewers, on-call engineers, and the future maintainer all use it to map a case name back to *what it pins and why it matters*. `agentprdiff scaffold` lays down a template — fill in one block per case in the suite, using exactly this structure (do not invent new section names; reviewers learn this shape once across projects):
+This is MANDATORY. The suite file is data that machines read; the dossier is prose that humans read. PR reviewers, on-call engineers, and the future maintainer all use it to map a case name back to *what it pins and why it matters*. `agentprdiff scaffold` lays down a template that contains both top-of-file execution details and a per-case skeleton — keep both shapes; fill in the per-case sections; tweak the execution details only where project-specific (e.g. virtualenv paths).
 
-```markdown
+The full per-file spec — including which sections are mandatory and exactly what each contains — lives in [`docs/suite-layout.md`](./docs/suite-layout.md#suitesprojectcasesmd--mandatory). The summary you need at the keyboard:
+
+**Top-of-file (the scaffold writes this):**
+
+- **Running the suite** — the full-suite `agentprdiff check suites/<project>.py` command, plus the local-source-checkout fallback (`PYTHONPATH=../agentprdiff/src .venv-agentprdiff/bin/python -m agentprdiff.cli ...`) for projects whose installed wheel predates `--case` / `--list` / `review`.
+- **List the available cases** (`--list`).
+- **Run one case** — substring filter, glob (`"*pattern*"`), and `--skip`. Mention that a zero-match filter exits 2.
+- **Use `review` for verbose, exit-0 iteration** — explain when to reach for `review` (watcher loops, local iteration) vs `check` (CI gate semantics).
+- **Seeing a regression locally** — two-or-three deliberately-break experiments tailored to *this* suite. Typical shape: (a) edit a system prompt or other text the suite pins, (b) edit a stub fixture so it returns different values, (c) edit an exception handler so a failure-mode contract regresses. Each entry includes the exact `--case` command and the expected grader failure. Adopters revert these edits afterward; the section exists so a reviewer can prove the suite catches what it claims to.
+- **Updating the baseline after an intentional change** — `agentprdiff record suites/<project>.py --case <name>` plus `git add .agentprdiff/baselines/`.
+
+**Per case (one block per `case(...)` entry in the suite):**
+
+````markdown
 ### `<case_name>`
 
 **What it tests.** One paragraph in plain English. A non-author should be able to read it in ten seconds and know what's protected.
@@ -468,7 +481,17 @@ This is MANDATORY. The suite file is data that machines read; the dossier is pro
 - `path/to/agent.py:NN` — what's tested at this line (prompt assembly, tool routing, post-processing, etc.).
 
 **Application impact.** One concrete sentence about what breaks for end users if this regresses. "Refunds silently fail" — not "the agent misbehaves."
+
+**How to exercise this case in isolation.**
+
+```bash
+agentprdiff check  suites/<project>.py --case <case_name>     # CI-style, exit 1 on regression
+agentprdiff review suites/<project>.py --case <case_name>     # verbose, exit 0
+agentprdiff record suites/<project>.py --case <case_name>     # re-record after intentional change
 ```
+````
+
+Do not invent new section names — reviewers learn this shape once across projects.
 
 Worked example (from a real adoption — embedding pipeline):
 
@@ -483,6 +506,14 @@ Worked example (from a real adoption — embedding pipeline):
 > **Code impacted.** `common/ai_content_summary.py:23` (prompt quality), `common/ai_content_summary.py:30` (returned summary content), `content-embeds-v2/app/functions/embedding.py:28` (where `ai_content_summary(...)` feeds the embedding input).
 >
 > **Application impact.** If this breaks, embeddings lose key article details. Search and recommendations end up embedding "a company acquired another company" instead of the actual entities and deal value — measurable degradation in retrieval relevance.
+>
+> **How to exercise this case in isolation.**
+>
+> ```bash
+> agentprdiff check  suites/ai_content_summary.py --case article_summary_preserves_acquisition_entities
+> agentprdiff review suites/ai_content_summary.py --case article_summary_preserves_acquisition_entities
+> agentprdiff record suites/ai_content_summary.py --case article_summary_preserves_acquisition_entities
+> ```
 
 Update the dossier whenever you add, remove, or meaningfully change a case. CI doesn't enforce sync (the dossier is reviewer documentation, not test infrastructure), so this discipline is on you.
 
@@ -810,7 +841,7 @@ Before declaring the work done, verify all of these. The checklist mirrors the c
 - [ ] `suites/_eval_agent.py` exists and uses `instrument_client` (or, for Recipe C, manual `Trace.record_*` calls).
 - [ ] `suites/_stubs.py` exists if the agent has side-effecting tools, with one stub per such tool. Stubs return shape-compatible dicts.
 - [ ] `suites/<project_name>.py` exists. Every case has at least one positive behavior assertion, at least one negative assertion (`no_tool_called` or similar), and a budget grader.
-- [ ] `suites/<project_name>_cases.md` exists. Every case in the suite has a corresponding `### \`<case_name>\`` section with all five fields filled in: *What it tests*, *Input*, *Assertions*, *Code impacted* (with file:line references to production code), *Application impact*. No TODO markers remain.
+- [ ] `suites/<project_name>_cases.md` exists. The top-of-file execution sections are present and project-customized: *Running the suite* (full-suite command + local-source-checkout fallback), *List the available cases*, *Run one case*, *Use `review` for verbose, exit-0 iteration*, *Seeing a regression locally* (two-or-three deliberately-break experiments tailored to this suite), *Updating the baseline after an intentional change*. Every case in the suite has a corresponding `### \`<case_name>\`` section with all six fields filled in: *What it tests*, *Input*, *Assertions*, *Code impacted* (with file:line references to production code), *Application impact*, *How to exercise this case in isolation* (the `check` / `review` / `record` commands pre-substituted with the case name). No TODO markers remain.
 - [ ] No case has more than one `semantic(...)` grader.
 - [ ] `agentprdiff init` was run; `.agentprdiff/.gitignore` exists.
 - [ ] `agentprdiff record suites/<project_name>.py` ran and produced one JSON file per case under `.agentprdiff/baselines/<project_name>/`.

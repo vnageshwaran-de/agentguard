@@ -58,7 +58,16 @@ This is the suite definition. The single file `agentprdiff record` and `agentprd
 
 The case dossier — reviewer-facing documentation that maps each `case.name` to plain English. The suite file is data that machines read; this file is prose that humans read at PR review and during incident triage. `agentprdiff scaffold` writes a template; you fill it in.
 
-**Must contain** one block per case in `<project>.py`, using exactly these section names so the shape is consistent across projects:
+**Must contain — top-of-file execution details** (the scaffold template stamps these out; keep them, customize the project-specific bits):
+
+- A **Running the suite** section with the full-suite command (`agentprdiff check suites/<project>.py`) and, where relevant, the local-source-checkout fallback for projects whose installed wheel predates `--case` / `--list` / `review` (`PYTHONPATH=../agentprdiff/src .venv-agentprdiff/bin/python -m agentprdiff.cli ...`).
+- A **List the available cases** subsection (`--list`).
+- A **Run one case** subsection covering substring filter, glob (`"*pattern*"`), and `--skip`, plus a note that a zero-match filter exits 2 — never silently no-ops.
+- A **Use `review` for verbose, exit-0 iteration** subsection explaining when to reach for `review` vs `check` (watcher loops vs CI-gate semantics).
+- A **Seeing a regression locally** section with two-to-three deliberately-break experiments — typically (a) edit a system prompt or other text the suite pins, (b) edit a stub fixture so it returns different values, (c) edit an exception handler so a failure-mode contract regresses — each with the exact `--case` command to run and the expected grader failure. Adopters revert these edits; the section exists so a new reviewer can prove the suite catches what it claims to.
+- An **Updating the baseline after an intentional change** section showing `agentprdiff record suites/<project>.py --case <name>` plus the `git add .agentprdiff/baselines/` follow-up.
+
+**Must contain — one block per case** in `<project>.py`, using exactly these section names so the shape is consistent across projects:
 
 - `### \`<case_name>\`` — heading matches `case.name`.
 - `**What it tests.**` — one paragraph in plain English.
@@ -66,6 +75,7 @@ The case dossier — reviewer-facing documentation that maps each `case.name` to
 - `**Assertions.**` — each grader translated to plain English, including the budget line.
 - `**Code impacted.**` — file paths and line numbers in production code that this case exercises (e.g. `agent/summarize.py:23`).
 - `**Application impact.**` — one concrete sentence about what breaks for end users on regression.
+- `**How to exercise this case in isolation.**` — a fenced bash block with the three case-scoped commands (`check`, `review`, `record`) pre-substituted with the case name, so a reviewer chasing a CI failure can paste-and-run without scrolling.
 
 **Must not contain** TODO markers from the scaffold template by the time the PR is opened. CI does not enforce sync between this file and the suite — drift is on you.
 

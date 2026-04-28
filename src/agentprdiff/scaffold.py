@@ -409,22 +409,109 @@ or meaningfully change a case.
 If a case fails in CI and you don't recognize the name, this file is the
 fastest path back to *what the case is pinning and why it matters*.
 
-## How to run
+## Running the suite
+
+Run every case from the repository root:
 
 ```bash
-agentprdiff check suites/{name}.py                      # full suite
-agentprdiff check suites/{name}.py --case happy_path    # one case (substring or glob)
-agentprdiff check suites/{name}.py --list               # discover case names
-agentprdiff check suites/{name}.py --skip slow          # everything except a pattern
+agentprdiff check suites/{name}.py
 ```
 
-After an *intentional* behavior change, re-record the baseline and explain
-the change in the PR description so reviewers see the before/after diff:
+If the installed wheel in your virtualenv predates the `--case`, `--list`,
+and `review` commands, use a local source checkout of agentprdiff next to
+this repository. Substitute `.venv-agentprdiff/` with whatever virtualenv
+your project actually uses:
 
 ```bash
-agentprdiff record suites/{name}.py
+.venv-agentprdiff/bin/agentprdiff check suites/{name}.py
+```
+
+### List the available cases
+
+```bash
+agentprdiff check suites/{name}.py --list
+# or, with a local source checkout:
+PYTHONPATH=../agentprdiff/src .venv-agentprdiff/bin/python -m agentprdiff.cli \\
+    check suites/{name}.py --list
+```
+
+### Run one case
+
+Filter by substring or glob (case-insensitive). A filter that matches
+nothing exits 2 — no silent zero-runs:
+
+```bash
+agentprdiff check suites/{name}.py --case happy_path
+agentprdiff check suites/{name}.py --case "*refund*"
+agentprdiff check suites/{name}.py --skip slow         # everything except a pattern
+```
+
+### Use `review` for verbose, exit-0 iteration
+
+`review` runs the same comparison `check` does but renders one verbose
+panel per case (input echo, every assertion's `was → now` verdict, cost /
+latency / token deltas, tool-sequence diff, unified output diff) and
+exits 0 even on regression — safe to wire into a watcher / `entr` / `fzf`
+loop without your shell going red on every iteration:
+
+```bash
+agentprdiff review suites/{name}.py --case happy_path
+```
+
+Reach for `check` when you want the CI gate's exit semantics; reach for
+`review` while you're working.
+
+## Seeing a regression locally
+
+These are safe local experiments to confirm the suite would catch a real
+behavior drift. Revert the edit after observing the failure — none of
+these changes should be committed.
+
+1. **Change the system prompt** in your production agent module to a
+   different sentence, then run:
+
+   ```bash
+   agentprdiff check suites/{name}.py --case happy_path
+   ```
+
+   Expected result: the prompt-text grader (e.g. `system_prompt_is(...)`)
+   fails because the recorded LLM call no longer matches the baseline
+   contract.
+
+2. **Change a stub fixture** in `suites/_stubs.py` so it returns different
+   values from the case expects, then run:
+
+   ```bash
+   agentprdiff check suites/{name}.py --case happy_path
+   ```
+
+   Expected result: the entity / value graders fail and the trace diff
+   shows the output text changed.
+
+3. **Change an exception handler** in production code (e.g. so a failure
+   path returns a string where callers expect `None`), then run:
+
+   ```bash
+   agentprdiff check suites/{name}.py --case happy_path
+   ```
+
+   Expected result: the contract grader pinning the failure-mode return
+   value fails, proving callers would no longer receive the fallback
+   signal they depend on.
+
+## Updating the baseline after an intentional change
+
+When a behavior change is intentional, re-record the baseline for only
+the affected case and commit the resulting JSON diff so reviewers see the
+before/after:
+
+```bash
+agentprdiff record suites/{name}.py --case happy_path
 git add .agentprdiff/baselines/
 ```
+
+Drop `--case` to re-record every case at once. Either form is safe to
+re-run — `record` overwrites baselines in place, no accumulation.
 
 ## Cases
 
@@ -453,11 +540,19 @@ affected lines without re-reading the whole agent.
 One sentence; concrete and specific. ("Refunds silently fail" not "the
 agent misbehaves.")
 
+**How to exercise this case in isolation.**
+
+```bash
+agentprdiff check  suites/{name}.py --case happy_path     # CI-style, exit 1 on regression
+agentprdiff review suites/{name}.py --case happy_path     # verbose, exit 0
+agentprdiff record suites/{name}.py --case happy_path     # re-record after intentional change
+```
+
 ---
 
 <!--
 Template for additional cases. Copy-paste this block, change the heading,
-fill in the four sections.
+fill in the five sections plus the run-commands block.
 
 ### `<case_name>`
 
@@ -474,6 +569,14 @@ fill in the four sections.
 -
 
 **Application impact.**
+
+**How to exercise this case in isolation.**
+
+```bash
+agentprdiff check  suites/{name}.py --case <case_name>
+agentprdiff review suites/{name}.py --case <case_name>
+agentprdiff record suites/{name}.py --case <case_name>
+```
 
 -->
 '''
