@@ -4,7 +4,9 @@ site_url: https://agentprdiff.dev/
 site_author: Vinoth Nageshwaran
 repo_url: https://github.com/vnageshwaran-de/agentprdiff
 repo_name: vnageshwaran-de/agentprdiff
-edit_uri: edit/main/docs-site/docs/
+# edit_uri removed — no per-page "edit on GitHub" pencil. Restore by
+# uncommenting the line below if you want drive-by typo-fix PRs:
+# edit_uri: edit/main/docs-site/docs/
 copyright: Copyright &copy; 2026 Vinoth Nageshwaran — MIT License
 
 # Files live under docs-site/docs/. Adjust if your site lives elsewhere.
@@ -29,7 +31,7 @@ theme:
     - search.share
     - content.code.copy
     - content.code.annotate
-    - content.action.edit
+    # - content.action.edit   # re-enable to show the per-page "edit" pencil
     - content.tooltips
   palette:
     - media: "(prefers-color-scheme: light)"
