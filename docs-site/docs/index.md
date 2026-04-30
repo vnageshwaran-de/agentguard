@@ -53,6 +53,8 @@ what it did, and compares runs across time.
 
 | Capability | What it gives you |
 |---|---|
+| **AI-agent adoption playbook** | An [`AGENTS.md`](https://github.com/vnageshwaran-de/agentprdiff/blob/main/AGENTS.md) at the repo root that Claude Code, Cursor, Aider, or any agentic IDE reads to add the suite *for you* — finds the production agent, proposes cases, generates files, records baselines. ~15 minutes end-to-end. |
+| `agentprdiff scaffold` | One command stamps out the canonical layout with `TODO:` markers — same files the AI agent produces, just empty. |
 | Tiny `Suite` / `Case` model | One Python file, no DSL, no YAML. |
 | Ten batteries-included graders | `contains`, `contains_any`, `regex_match`, `tool_called`, `tool_sequence`, `no_tool_called`, `output_length_lt`, `latency_lt_ms`, `cost_lt_usd`, `semantic`. |
 | Pluggable LLM judge | OpenAI, Anthropic, custom callable, or a deterministic `fake_judge`. |
@@ -96,6 +98,19 @@ The path through the system on a single CLI invocation is:
 6. **Reporters** render to the terminal and optionally to a JSON artifact.
 7. The CLI exits `1` when any case has a regression (pass→fail flip, new
    exception, missing baseline + failing assertion).
+
+## The fastest adoption path
+
+Open Claude Code, Cursor, Aider, or any agentic IDE in your project and
+paste the [recommended adoption prompt](./quickstart.md#path-a--let-an-ai-agent-adopt-the-package-for-you-recommended).
+The assistant reads `AGENTS.md`, finds your production agent, asks you
+to confirm 5-10 case contracts, and writes the entire suite + CI
+workflow. You stay in the loop for two checkpoints (~3 minutes of
+review). Total time: ~15-20 minutes from `pip install` to green CI.
+
+If you'd rather hand-write the suite, the same Quickstart has a
+[manual path](./quickstart.md#path-b--write-the-suite-yourself) that
+walks through every file.
 
 ## Where to next
 
