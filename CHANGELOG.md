@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-04-29
+
+Metadata-only release. Code is identical to 0.2.3 — this exists solely
+to ship the new docs site URL onto pypi.org's package sidebar (PyPI
+reads `Project-URL` entries from the published wheel, not from the
+GitHub repo, so the docs site otherwise wouldn't be discoverable from
+pypi.org/project/agentprdiff).
+
+### Changed
+
+- `pyproject.toml` `[project.urls]`: `Homepage` and `Documentation` now
+  point at the new MkDocs Material site (https://agentprdiff.dev).
+  `Repository` and `Issues` continue to point at GitHub. Added a
+  `Changelog` URL.
+- `README.md`: prominent docs link in the header and pepy.tech download
+  badges (lifetime + monthly).
+
+### Internal
+
+- Synced `agentprdiff.__version__` string with `pyproject.toml`'s
+  `version` field — was a leftover miss from the 0.2.3 release.
+
 ## [0.2.3] — 2026-04-28
 
 ### Added
